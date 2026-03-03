@@ -1,0 +1,35 @@
+{
+  "name": "grocery-store-scraper",
+  "version": "1.0.0",
+  "description": "Full-scale web scraper for grocery, halal, and Muslim-community businesses in UK and France using Crawlee + Playwright",
+  "main": "src/main.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.js",
+    "start:uk": "node src/main.js --country=UK",
+    "start:fr": "node src/main.js --country=FR",
+    "sample:uk": "node src/main.js --country=UK --sample",
+    "sample:fr": "node src/main.js --country=FR --sample"
+  },
+  "keywords": [
+    "web-scraping",
+    "crawlee",
+    "playwright",
+    "grocery-store",
+    "halal",
+    "directory"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@playwright/browser-chromium": "^1.58.2",
+    "crawlee": "^3.16.0",
+    "csv-stringify": "^6.6.0",
+    "dotenv": "^17.3.1",
+    "fast-csv": "^5.0.5",
+    "playwright": "^1.58.2",
+    "string-similarity": "^4.0.4",
+    "winston": "^3.19.0",
+    "yargs": "^18.0.0"
+  }
+}
