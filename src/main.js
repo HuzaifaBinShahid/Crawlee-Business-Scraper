@@ -176,8 +176,15 @@ async function main() {
   if (argv.category && argv.category.trim()) {
     logger.info(`Category:    ${argv.category.trim()}`);
   }
-  if (country === 'UK' && !isSample && argv.resume !== false && !argv.fresh) {
-    logger.info('Resume:      enabled (use --no-resume or --fresh to start over)');
+  if (
+    (country === 'UK' || country === 'FR') &&
+    !isSample &&
+    argv.resume !== false &&
+    !argv.fresh
+  ) {
+    logger.info(
+      'Resume:      enabled (use --no-resume or --fresh to start over)',
+    );
   }
   logger.info(`Concurrency: ${concurrency}`);
   logger.info(`Output:      ${outputDir}`);
@@ -231,7 +238,10 @@ async function main() {
 
   const useIncrementalWrite = (country === 'UK' || country === 'FR') && !isSample;
   const allowResume =
-    useIncrementalWrite && country === 'UK' && argv.resume !== false && !argv.fresh;
+    useIncrementalWrite &&
+    (country === 'UK' || country === 'FR') &&
+    argv.resume !== false &&
+    !argv.fresh;
   let processedRecords = [];
   let recordsForJson = processedRecords;
   let stats = null;
@@ -249,10 +259,10 @@ async function main() {
     csvPath = path.join(outputDir, `${filePrefix}.csv`);
     jsonPath = path.join(outputDir, `${filePrefix}.json`);
     jsonlPath = path.join(outputDir, `${filePrefix}.jsonl`);
-    progressPath =
-      country === 'UK'
-        ? path.join(outputDir, `progress_${country}_full_${timestamp}.json`)
-        : '';
+    progressPath = path.join(
+      outputDir,
+      `progress_${country}_full_${timestamp}.json`,
+    );
 
     const existingProgress =
       allowResume && progressPath ? loadProgress(progressPath) : null;
@@ -279,19 +289,63 @@ async function main() {
       );
     } else {
       if (country === 'FR') {
-        resetCounters();
-        initIncrementalCsv(csvPath);
-        initIncrementalJsonl(jsonlPath);
-        logger.info(
-          '[Incremental] FR: Writing to CSV and JSONL as records are fetched.',
-        );
-        progressData = {
-          runKey: `FR_full_${timestamp}`,
-          csvPath,
-          jsonlPath,
-          completedSearches: [],
-          idGeneratorState: getCounterState(),
-        };
+        const overwriteFiles = argv.fresh;
+        if (!csvExists || overwriteFiles) {
+          initIncrementalCsv(csvPath);
+          logger.info(
+            overwriteFiles && csvExists
+              ? '[Incremental] FR: Overwrote CSV (--fresh).'
+              : '[Incremental] FR: Created new CSV file.',
+          );
+        } else {
+          logger.info(
+            '[Incremental] FR: Appending to existing CSV (resume).',
+          );
+        }
+        if (!jsonlExists || overwriteFiles) {
+          initIncrementalJsonl(jsonlPath);
+          logger.info(
+            overwriteFiles && jsonlExists
+              ? '[Incremental] FR: Overwrote JSONL (--fresh).'
+              : '[Incremental] FR: Created new JSONL file.',
+          );
+        } else {
+          logger.info(
+            '[Incremental] FR: Appending to existing JSONL (resume).',
+          );
+        }
+        const existingProgressFR =
+          allowResume && progressPath ? loadProgress(progressPath) : null;
+        if (
+          existingProgressFR &&
+          (csvExists || jsonlExists) &&
+          !overwriteFiles
+        ) {
+          isResume = true;
+          setCounterState(existingProgressFR.idGeneratorState || {});
+          progressData = {
+            runKey: existingProgressFR.runKey || `FR_full_${timestamp}`,
+            csvPath,
+            jsonlPath,
+            completedSearches: [
+              ...(existingProgressFR.completedSearches || []),
+            ],
+            idGeneratorState: getCounterState(),
+          };
+          logger.info(
+            `[Resume] FR: Continuing from previous run: ` +
+              `${progressData.completedSearches.length} searches already done.`,
+          );
+        } else {
+          if (!existingProgressFR || overwriteFiles) resetCounters();
+          progressData = {
+            runKey: `FR_full_${timestamp}`,
+            csvPath,
+            jsonlPath,
+            completedSearches: existingProgressFR?.completedSearches ?? [],
+            idGeneratorState: getCounterState(),
+          };
+        }
       } else {
       const overwriteFiles = argv.fresh;
       if (!csvExists || overwriteFiles) {
