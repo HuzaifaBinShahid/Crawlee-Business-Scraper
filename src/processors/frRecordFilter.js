@@ -70,6 +70,8 @@ export function isValidFrRecord(record) {
 
   if (hasNonFrancePhone(record)) return false;
 
+  if (record.rating == null || record.review_count == null) return false;
+
   return true;
 }
 
