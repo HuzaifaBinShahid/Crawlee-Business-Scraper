@@ -422,9 +422,8 @@ async function main() {
     if (final.country === 'UK' && !isValidUkRecord(final)) {
       return;
     }
-    if (final.country === 'FR' && !isValidFrRecord(final)) {
-      return;
-    }
+    // FR: append all records (e.g. Pages Jaunes has no lat/lng on cards).
+    // Client export can still filter by coordinates later if needed.
     processedRecords.push(final);
     appendRecordToCsv(final, csvPath);
     appendRecordToJsonl(final, jsonlPath);

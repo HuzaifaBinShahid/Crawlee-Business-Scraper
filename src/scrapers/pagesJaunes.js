@@ -4,18 +4,21 @@
  * Uses Crawlee's PlaywrightCrawler with Chromium to scrape
  * business listings from PagesJaunes.fr.
  *
- * VERIFIED SELECTORS (from live HTML as of Feb 2026):
- *   Listing cards:    li.bi.bi-generic
- *   Business name:    a.bi-denomination h3
- *   Address:          .bi-address a (text contains street+postcode+city)
- *   Phone:            .bi-fantomas .number-contact (hidden until "Afficher le N" clicked)
- *   Opening hours:    .bi-hours span
- *   Detail page URL:  a.bi-denomination[href]
+ * Search: direct GET to /annuaire/chercherlespros?quoiqui=...&ou=...&page=...
+ * Form equivalents: category in #quoiqui, location in #ou, submit #findId.
+ *
+ * VERIFIED SELECTORS (from live HTML):
+ *   Results section:   section#listResults, ul.bi-list
+ *   Listing cards:     ul.bi-list li.bi[id^="bi-"] (excludes ad blocks)
+ *   Business name:     a.bi-denomination h3
+ *   Address:           .bi-address a (text: street, postcode, city)
+ *   Rating:            .bi-note .note_moyenne
+ *   Review count:      .bi-rating (e.g. "(7 avis)")
+ *   Phone:             .bi-fantomas .number-contact (after click "Afficher le N°")
+ *   Website:           a.bi-website[href] or data-pjlb (base64)
+ *   Detail page URL:   a.bi-denomination[href*="/pros/"] or data-pjlb
  *   Next page:        #pagination-next
  *   Cookie consent:   #didomi-notice-agree-button
- *
- * NOTE: Phone numbers are behind a click-to-reveal button.
- *       We click "Afficher le N" to expose them in .bi-fantomas.
  */
 
 import { PlaywrightCrawler } from 'crawlee';
@@ -28,7 +31,7 @@ import { normalizeRecord } from '../utils/normalizer.js';
  * Build PagesJaunes.fr search URL.
  *
  * @param {string} keyword - Search term (quoiqui)
- * @param {string} location - City or area name (ou)
+ * @param {string} location - City or area name (ou), e.g. Paris, Lyon
  * @param {number} [page=1] - Page number
  * @returns {string} PagesJaunes search URL
  */
@@ -45,7 +48,6 @@ function buildSearchUrl(keyword, location, page = 1) {
 
 /**
  * Extract a single business record from a PagesJaunes <li.bi> card.
- * Based on verified live HTML structure.
  *
  * @param {import('playwright').Page} page - Playwright page
  * @param {import('playwright').ElementHandle} card - The <li.bi> element
@@ -55,92 +57,151 @@ function buildSearchUrl(keyword, location, page = 1) {
 async function extractListingCard(page, card, category) {
   try {
     // ---- BUSINESS NAME ----
-    // Selector: a.bi-denomination > h3
     const businessName = await card
       .$eval(
-        'a.bi-denomination h3',
-        (el) => el.textContent?.trim(),
+        'a.bi-denomination h3, .bi-denomination h3',
+        (el) => el?.textContent?.trim(),
       )
       .catch(() => '');
 
     if (!businessName) return null;
 
     // ---- ADDRESS ----
-    // Selector: .bi-address a (contains full text like
-    //   "209 avenue Versailles 75016 Paris")
     const rawAddress = await card
       .$eval(
         '.bi-address a',
-        (el) => el.textContent?.trim(),
+        (el) => el?.textContent?.trim(),
       )
       .catch(() => '');
 
     const addressParts = parsePagesJaunesAddress(rawAddress);
 
-    // ---- PHONE NUMBER ----
-    // Phone is hidden in .bi-fantomas .number-contact
-    // First, click the "Afficher le N" button to reveal it
-    let phone = '';
-    try {
-      const phoneBtn = await card.$(
-        'button.btn_tel',
-      );
-      if (phoneBtn) {
-        await phoneBtn.click();
-        await randomDelay(300, 600);
-      }
-
-      // Now extract from the revealed .bi-fantomas div
-      // The text is like "Tél : 09 84 41 65 73"
-      const phoneRaw = await card
-        .$eval(
-          '.bi-fantomas .number-contact',
-          (el) => el.textContent?.trim(),
-        )
-        .catch(() => '');
-
-      if (phoneRaw) {
-        // Extract phone number: digits, spaces, and +
-        const phoneMatch = phoneRaw.match(
-          /(?:Tél\s*:\s*)?(\+?[\d\s]{8,})/,
-        );
-        phone = phoneMatch
-          ? phoneMatch[1].trim()
-          : '';
-      }
-    } catch (e) {
-      // Phone not available
+    // ---- RATING ----
+    let rating = null;
+    const ratingText = await card
+      .$eval(
+        '.bi-note .note_moyenne, .bi-note h4 .note_moyenne',
+        (el) => el?.textContent?.trim(),
+      )
+      .catch(() => '');
+    if (ratingText) {
+      const r = parseFloat(ratingText.replace(',', '.'));
+      if (!Number.isNaN(r) && r >= 0 && r <= 5) rating = r;
     }
 
+    // ---- REVIEW COUNT ----
+    let reviewCount = null;
+    const ratingLabel = await card
+      .$eval(
+        '.bi-rating',
+        (el) => el?.textContent?.trim(),
+      )
+      .catch(() => '');
+    if (ratingLabel) {
+      const avisMatch = ratingLabel.match(
+        /(?:\(?\s*)(\d[\d\s,]*)\s*avis/i,
+      );
+      if (avisMatch) {
+        const n = parseInt(avisMatch[1].replace(/[\s,]/g, ''), 10);
+        if (!Number.isNaN(n) && n >= 0) reviewCount = n;
+      }
+    }
+
+    // ---- PHONE: not extracted (would require clicking "Afficher le N°") ----
+    const phone = '';
+
+    // ---- ACTIVITY (e.g. "boucheries, boucheries-charcuteries") ----
+    const activity = await card
+      .$eval(
+        '.bi-activity-unit',
+        (el) => el?.textContent?.trim(),
+      )
+      .catch(() => '');
+
+    // ---- DESCRIPTION ----
+    const description = await card
+      .$eval(
+        '.bi-description',
+        (el) => el?.textContent?.trim(),
+      )
+      .catch(() => '');
+
+    // ---- TAGS (e.g. ["boucherie halal", "rôtisserie"]) ----
+    const tags = await card
+      .$$eval(
+        '.bi-tags-list .bi-tag',
+        (nodes) => nodes.map((n) => n?.textContent?.trim()).filter(Boolean),
+      )
+      .catch(() => []);
+
     // ---- OPENING HOURS ----
-    // Selector: .bi-hours span (e.g. "Fermé maintenant")
     const openingHours = await card
       .$eval(
         '.bi-hours',
-        (el) => el.textContent?.trim(),
+        (el) => el?.textContent?.trim(),
       )
       .catch(() => '');
 
     // ---- DETAIL PAGE URL ----
-    // Selector: a.bi-denomination[href]
-    // href is like "/pros/54398069" (relative)
     let detailUrl = await card
       .$eval(
         'a.bi-denomination',
-        (el) => el.href,
+        (el) => {
+          const href = el?.getAttribute?.('href')?.trim();
+          if (href && href.includes('/pros/')) return el.href || '';
+          const pjlb = el?.getAttribute?.('data-pjlb');
+          if (pjlb) {
+            try {
+              const parsed = JSON.parse(pjlb);
+              const url = parsed?.url;
+              if (url) {
+                const decoded = atob(url);
+                if (decoded.startsWith('http')) return decoded;
+                if (decoded.startsWith('/'))
+                  return `https://www.pagesjaunes.fr${decoded}`;
+              }
+            } catch {}
+          }
+          return '';
+        },
       )
       .catch(() => '');
 
-    // Make absolute if relative
     if (detailUrl && !detailUrl.startsWith('http')) {
       detailUrl = `https://www.pagesjaunes.fr${detailUrl}`;
     }
 
-    // ---- SOCIAL MEDIA (from listing card links) ----
-    const socialLinks = await extractSocialFromCard(card);
+    // ---- WEBSITE (from card when present) ----
+    let website = await card
+      .$eval(
+        'a.bi-website[href^="http"]',
+        (el) => el?.href?.trim(),
+      )
+      .catch(() => '');
+    if (!website) {
+      website = await card
+        .$eval(
+          'a.bi-website[data-pjlb]',
+          (el) => {
+            const pjlb = el?.getAttribute?.('data-pjlb');
+            if (!pjlb) return '';
+            try {
+              const parsed = JSON.parse(pjlb);
+              const url = parsed?.url;
+              if (!url) return '';
+              const decoded = atob(url);
+              if (decoded.startsWith('http')) return decoded;
+              if (decoded.startsWith('/'))
+                return `https://www.pagesjaunes.fr${decoded}`;
+            } catch {}
+            return '';
+          },
+        )
+        .catch(() => '');
+    }
 
-    // ---- WEBSITE (not typically on listing card, comes from detail page) ----
-    const website = '';
+    // ---- SOCIAL MEDIA ----
+    const socialLinks = await extractSocialFromCard(card);
 
     const record = {
       businessName,
@@ -149,17 +210,23 @@ async function extractListingCard(page, card, category) {
       zipCode: addressParts.zipCode,
       state: addressParts.state,
       phone,
-      website,
+      website: website || '',
       googleMapsLink: '',
       latitude: null,
       longitude: null,
       openingHours,
+      rating,
+      review_count: reviewCount,
       facebook: socialLinks.facebook,
       instagram: socialLinks.instagram,
       tiktok: socialLinks.tiktok,
       category,
       country: 'FR',
       source: 'PagesJaunes.fr',
+      activity: activity || '',
+      description: description || '',
+      tags: Array.isArray(tags) ? tags : [],
+      detailUrl: detailUrl || '',
       _detailUrl: detailUrl,
     };
 
@@ -299,10 +366,11 @@ async function scrapeDetailPage(page, detailUrl) {
     // Website link from detail page
     details.website = await page
       .$eval(
-        'a[data-pjstats*="SITE_WEB"], ' +
+        'a.bi-website[href^="http"], ' +
+          'a[data-pjstats*="SITE_WEB"], ' +
           'a[data-pjstats*="WEBSITE"], ' +
           'a.pj-link[href*="http"][target="_blank"]',
-        (el) => el.href,
+        (el) => el?.href?.trim(),
       )
       .catch(() => '');
 
@@ -427,26 +495,54 @@ export async function scrapePagesJaunes({
         `[PJ] "${keyword}" in ${location} - Page ${currentPage}`,
       );
 
-      // Handle Didomi cookie consent (RGPD)
+      // Handle cookie/consent modals (Didomi or "Faites un choix" banner):
+      // click accept so the list is visible, then wait for ul.bi-list.
       try {
-        const cookieBtn = await page.$(
-          '#didomi-notice-agree-button, ' +
-            'button:has-text("Accepter & Fermer"), ' +
-            'button:has-text("Tout accepter")',
-        );
-        if (cookieBtn) {
-          await cookieBtn.click();
-          await randomDelay(500, 1000);
+        await randomDelay(1200, 2000);
+        const acceptSelectors = [
+          '#didomi-notice-agree-button',
+          'button.button__acceptAll',
+          'button.button__skip',
+          '[aria-label*="Tout Accepter"]',
+        ];
+        let clicked = false;
+        for (const sel of acceptSelectors) {
+          const btn = await page.$(sel);
+          if (btn) {
+            await btn.click();
+            clicked = true;
+            break;
+          }
         }
+        if (!clicked) {
+          const byText = await page
+            .locator(
+              'button:has-text("Tout Accepter"), ' +
+                'button:has-text("Tout accepter"), ' +
+                'button:has-text("Accepter & Fermer"), ' +
+                'button:has-text("Accepter")',
+            )
+            .first()
+            .click()
+            .then(() => true)
+            .catch(() => false);
+          if (byText) clicked = true;
+        }
+        if (clicked) await randomDelay(800, 1500);
       } catch (e) {
-        // No consent dialog
+        // No consent dialog or already closed
       }
 
-      // Wait for the listing cards to load
-      // Real selector: li.bi.bi-generic inside ul.bi-list
+      // Wait for the results list (ul.bi-list) to be visible after consent
+      await page
+        .waitForSelector('ul.bi-list', { state: 'visible', timeout: 25000 })
+        .catch(() => null);
+      await randomDelay(1000, 1800);
+
+      // Wait for at least one listing card to appear
       await page
         .waitForSelector(
-          'ul.bi-list li.bi, li.bi-generic',
+          'ul.bi-list li.bi[id^="bi-"]',
           { timeout: 15000 },
         )
         .catch(() => {
@@ -455,10 +551,14 @@ export async function scrapePagesJaunes({
           );
         });
 
-      // Extract all listing cards (li.bi inside section.results)
-      const cards = await page.$$(
-        'ul.bi-list > li.bi',
-      );
+      await randomDelay(600, 1000);
+
+      const allCards = await page.$$('ul.bi-list > li.bi');
+      const cards = [];
+      for (const el of allCards) {
+        const id = await el.getAttribute('id').catch(() => '');
+        if (id && /^bi-\d+$/.test(id)) cards.push(el);
+      }
 
       log.info(
         `Found ${cards.length} listings on page ${currentPage}`,
@@ -483,44 +583,6 @@ export async function scrapePagesJaunes({
 
           if (!seenNames.has(dedupKey)) {
             seenNames.add(dedupKey);
-
-            // Visit detail page for extra data (website, social, hours)
-            if (record._detailUrl && !isSample) {
-              try {
-                const details = await scrapeDetailPage(
-                  page,
-                  record._detailUrl,
-                );
-
-                if (details.openingHours) {
-                  record.openingHours = details.openingHours;
-                }
-                if (details.facebook && !record.facebook) {
-                  record.facebook = details.facebook;
-                }
-                if (details.instagram && !record.instagram) {
-                  record.instagram = details.instagram;
-                }
-                if (details.tiktok && !record.tiktok) {
-                  record.tiktok = details.tiktok;
-                }
-                if (details.website && !record.website) {
-                  record.website = details.website;
-                }
-
-                // Navigate back to search results
-                await page.goBack({
-                  waitUntil: 'domcontentloaded',
-                }).catch(() => {});
-                await randomDelay(1000, 2000);
-              } catch (e) {
-                logger.debug(
-                  'Could not visit PagesJaunes detail page',
-                );
-              }
-            }
-
-            // Remove internal field
             delete record._detailUrl;
             allRecords.push(record);
             if (onRecord) onRecord(record);

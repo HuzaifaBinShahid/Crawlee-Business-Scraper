@@ -47,6 +47,11 @@ function recordToExportShape(record) {
       tiktok: record.tiktok || '',
     },
     dataSource: record.source || '',
+    // Pages Jaunes / listing card extras
+    activity: record.activity || '',
+    description: record.description || '',
+    tags: Array.isArray(record.tags) ? record.tags : [],
+    detailUrl: record.detailUrl || '',
   };
 }
 
@@ -122,6 +127,10 @@ export function readJsonlToRecords(outputPath) {
         instagram: (o.socialMedia && o.socialMedia.instagram) || '',
         tiktok: (o.socialMedia && o.socialMedia.tiktok) || '',
         source: o.dataSource || '',
+        activity: o.activity || '',
+        description: o.description || '',
+        tags: Array.isArray(o.tags) ? o.tags : [],
+        detailUrl: o.detailUrl || '',
       });
     } catch (e) {
       // Skip malformed lines
