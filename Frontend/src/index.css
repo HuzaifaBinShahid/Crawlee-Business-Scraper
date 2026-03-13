@@ -1,0 +1,78 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+
+@import "tailwindcss";
+
+@theme {
+  /* Dark theme palette */
+  --color-surface-50: #334155;
+  --color-surface-100: #1e293b;
+  --color-surface-200: #334155;
+  --color-surface-300: #475569;
+  --color-surface-400: #64748b;
+  --color-accent: #64748b;
+  --color-accent-hover: #94a3b8;
+  --color-accent-light: #94a3b8;
+  --color-accent-muted: #334155;
+
+  /* Font */
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+
+  /* Shadows - dark */
+  --shadow-sidebar: 4px 0 24px -4px rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.2);
+  --shadow-card-hover: 0 8px 24px -4px rgba(0, 0, 0, 0.35);
+
+  /* Animations */
+  --animate-fade-in: fade-in 0.3s ease-out;
+  --animate-fade-in-up: fade-in-up 0.45s ease-out;
+  --animate-slide-in-left: slide-in-left 0.25s ease-out;
+  --animate-scale-in: scale-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+
+  @keyframes fade-in {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+  @keyframes fade-in-up {
+    0% { opacity: 0; transform: translateY(16px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slide-in-left {
+    0% { opacity: 0; transform: translateX(-8px); }
+    100% { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes scale-in {
+    0% { opacity: 0; transform: scale(0.96); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+}
+
+@layer base {
+  * {
+    @apply box-border;
+  }
+  body {
+    @apply m-0 font-sans antialiased min-h-screen text-stone-200;
+    background: #0f172a;
+  }
+  #root {
+    @apply min-h-screen;
+  }
+}
+
+/* Recharts - dark theme */
+.recharts-default-tooltip {
+  @apply !bg-slate-800 !border !border-slate-600 !rounded-lg !px-3 !py-2 !text-sm !text-stone-200 !shadow-xl;
+}
+.recharts-tooltip-wrapper {
+  @apply outline-none;
+}
+.recharts-legend-item-text {
+  @apply text-stone-300;
+}
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: #334155;
+}
+.recharts-text {
+  fill: #94a3b8;
+}

@@ -1,0 +1,33 @@
+{
+  "name": "nationwide-scraper",
+  "version": "1.0.0",
+  "description": "Google Maps scraper for Pakistan, Saudi Arabia, and any country — same schema as France dataset",
+  "main": "src/main.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.js",
+    "sample:pk": "node src/main.js --country=PK --sample",
+    "sample:sa": "node src/main.js --country=SA --sample"
+  },
+  "keywords": [
+    "google-maps",
+    "scraper",
+    "crawlee",
+    "playwright",
+    "nationwide",
+    "pakistan",
+    "saudi-arabia"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@playwright/browser-chromium": "^1.58.2",
+    "crawlee": "^3.16.0",
+    "csv-stringify": "^6.6.0",
+    "dotenv": "^17.3.1",
+    "playwright": "^1.58.2",
+    "string-similarity": "^4.0.4",
+    "winston": "^3.19.0",
+    "yargs": "^18.0.0"
+  }
+}
