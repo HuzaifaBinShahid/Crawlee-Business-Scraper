@@ -27,6 +27,30 @@ const CSV_COLUMNS = [
   { key: 'source', header: 'Data Source' },
 ];
 
+function escapeCsvValue(value) {
+  if (value === null || value === undefined) return '""';
+  const s = String(value);
+  if (s.includes('"') || s.includes(',') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+  return '"' + s + '"';
+}
+
+/** Header line for internal CSV (with BOM). Use for streaming write. */
+export function getCsvHeaderLine() {
+  const headers = CSV_COLUMNS.map((c) => c.header);
+  return '\uFEFF' + headers.map((h) => escapeCsvValue(h)).join(',') + '\n';
+}
+
+/** Single CSV row for one record. Append after header for streaming. */
+export function recordToCsvRow(record) {
+  const values = CSV_COLUMNS.map((col) => {
+    let value = record[col.key];
+    if (value === null || value === undefined) value = '';
+    if (typeof value === 'number') value = String(value);
+    return escapeCsvValue(value);
+  });
+  return values.join(',') + '\n';
+}
+
 export function exportToCsv(records, outputPath) {
   if (!records || records.length === 0) { logger.warn('[CSV] No records'); return ''; }
   const dir = path.dirname(outputPath);
@@ -47,4 +71,4 @@ export function exportToCsv(records, outputPath) {
   return outputPath;
 }
 
-export default { exportToCsv };
+export default { exportToCsv, getCsvHeaderLine, recordToCsvRow };

@@ -13,13 +13,13 @@ import logger from './utils/logger.js';
 import { getCategories } from './config/keywords.js';
 import { getLocations } from './config/locations.js';
 import { getCountryDisplayName, normalizeCountryCode } from './config/countryNames.js';
-import { filterToSampleRegion } from './config/sampleBounds.js';
+import { isWithinSampleRegion } from './config/sampleBounds.js';
 import { scrapeGoogleMaps } from './scrapers/googleMaps.js';
-import { deduplicateRecords } from './processors/deduplicator.js';
+import { getDedupeKey } from './processors/deduplicator.js';
 import { generateId, resetCounters } from './utils/idGenerator.js';
-import { exportToCsv } from './exporters/csvExporter.js';
-import { exportToJson } from './exporters/jsonExporter.js';
-import { prepareAndExportClient } from './exporters/clientExport.js';
+import { getCsvHeaderLine, recordToCsvRow } from './exporters/csvExporter.js';
+import { recordToExportShape, finishJsonFromNdjson } from './exporters/jsonExporter.js';
+import { getClientCsvHeaderLine, clientRecordToCsvRow, toClientRecord } from './exporters/clientExport.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -99,6 +99,51 @@ async function main() {
 
   resetCounters();
 
+  const timestamp = new Date().toISOString().split('T')[0];
+  const mode = isSample ? 'sample' : 'full';
+  const countrySlug = countryCode || countryInput.replace(/\s+/g, '_');
+  const filePrefix = `businesses_${countrySlug}_${mode}_${timestamp}`;
+  const clientSuffix = isSample ? `_sample_50` : '_full';
+  const clientPrefix = `businesses_${countrySlug}_client${clientSuffix}_${timestamp}`;
+
+  const csvPath = path.join(outputDir, `${filePrefix}.csv`);
+  const ndjsonPath = path.join(outputDir, `${filePrefix}.ndjson`);
+  const jsonPath = path.join(outputDir, `${filePrefix}.json`);
+  const clientCsvPath = path.join(outputDir, `${clientPrefix}.csv`);
+  const clientNdjsonPath = path.join(outputDir, `${clientPrefix}.ndjson`);
+
+  const internalCsv = fs.createWriteStream(csvPath, { flags: 'w', encoding: 'utf-8' });
+  const internalNdjson = fs.createWriteStream(ndjsonPath, { flags: 'w', encoding: 'utf-8' });
+  const clientCsv = fs.createWriteStream(clientCsvPath, { flags: 'w', encoding: 'utf-8' });
+  const clientNdjson = fs.createWriteStream(clientNdjsonPath, { flags: 'w', encoding: 'utf-8' });
+
+  internalCsv.write(getCsvHeaderLine());
+  clientCsv.write(getClientCsvHeaderLine());
+
+  const dedupeSet = new Set();
+  const clientDedupeSet = new Set();
+  let writtenCount = 0;
+
+  function onRecord(record) {
+    if (isSample) {
+      const code = (countryCode || countryInput || '').toString();
+      if (!isWithinSampleRegion(record, code)) return;
+    }
+    const key = getDedupeKey(record);
+    if (dedupeSet.has(key)) return;
+    dedupeSet.add(key);
+    record.uniqueId = generateId(record.country || countryCode || countryInput, record.city || '');
+    internalCsv.write(recordToCsvRow(record));
+    internalNdjson.write(JSON.stringify(recordToExportShape(record)) + '\n');
+    if (!clientDedupeSet.has(key)) {
+      clientDedupeSet.add(key);
+      const clientRecord = toClientRecord(record);
+      clientCsv.write(clientRecordToCsvRow(clientRecord));
+      clientNdjson.write(JSON.stringify(clientRecord) + '\n');
+    }
+    writtenCount++;
+  }
+
   const records = await scrapeGoogleMaps({
     country: countryCode || countryInput,
     countryDisplayName,
@@ -108,42 +153,40 @@ async function main() {
     sampleTargetTotal: isSample ? 50 : 0,
     samplePerCategoryTarget: 10,
     maxConcurrency: concurrency,
+    onRecord,
   });
 
-  if (!records.length) {
+  const closeStream = (stream) => new Promise((resolve, reject) => {
+    stream.end((err) => (err ? reject(err) : resolve()));
+  });
+  await Promise.all([
+    closeStream(internalCsv),
+    closeStream(internalNdjson),
+    closeStream(clientCsv),
+    closeStream(clientNdjson),
+  ]);
+
+  if (writtenCount > 0) {
+    finishJsonFromNdjson(ndjsonPath, jsonPath, writtenCount);
+  }
+
+  if (!records.length && writtenCount === 0) {
     logger.warn('No records scraped. Exiting.');
+    try { fs.unlinkSync(csvPath); } catch (e) {}
+    try { fs.unlinkSync(ndjsonPath); } catch (e) {}
+    try { fs.unlinkSync(clientCsvPath); } catch (e) {}
+    try { fs.unlinkSync(clientNdjsonPath); } catch (e) {}
     process.exit(0);
-  }
-
-  const regionFiltered = filterToSampleRegion(records, countryCode || countryInput, isSample);
-  const deduped = deduplicateRecords(regionFiltered);
-  for (const r of deduped) {
-    r.uniqueId = generateId(r.country || countryCode || countryInput, r.city || '');
-  }
-
-  const timestamp = new Date().toISOString().split('T')[0];
-  const mode = isSample ? 'sample' : 'full';
-  const filePrefix = `businesses_${countryCode || countryInput.replace(/\s+/g, '_')}_${mode}_${timestamp}`;
-  const csvPath = path.join(outputDir, `${filePrefix}.csv`);
-  const jsonPath = path.join(outputDir, `${filePrefix}.json`);
-
-  exportToCsv(deduped, csvPath);
-  exportToJson(deduped, jsonPath, { totalRecords: deduped.length });
-
-  const clientResult = prepareAndExportClient(deduped, outputDir, countryCode || countryInput.replace(/\s+/g, '_'), {
-    sampleSize: isSample ? 50 : null,
-    timestamp,
-  });
-  if (clientResult.count > 0) {
-    logger.info(`[Client] ${clientResult.count} records → ${clientResult.csvPath} | ${clientResult.ndjsonPath}`);
   }
 
   logger.info('='.repeat(60));
   logger.info('SCRAPING COMPLETE');
   logger.info('='.repeat(60));
-  logger.info(`Total records: ${deduped.length}`);
-  logger.info(`CSV:  ${csvPath}`);
-  logger.info(`JSON: ${jsonPath}`);
+  logger.info(`Total records saved: ${writtenCount}`);
+  logger.info(`Internal CSV:  ${csvPath}`);
+  logger.info(`Internal JSON: ${jsonPath}`);
+  logger.info(`Client CSV:    ${clientCsvPath}`);
+  logger.info(`Client NDJSON: ${clientNdjsonPath}`);
   logger.info('='.repeat(60));
 }
 

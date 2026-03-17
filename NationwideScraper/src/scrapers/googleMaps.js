@@ -230,6 +230,7 @@ function searchKey(userData) {
  * @param {number} [options.sampleTargetTotal=50]
  * @param {number} [options.samplePerCategoryTarget=10]
  * @param {number} [options.maxConcurrency=2]
+ * @param {function(Object)} [options.onRecord] - Called for each new record (after in-scraper dedupe). Use for incremental save.
  */
 export async function scrapeGoogleMaps({
   country,
@@ -240,6 +241,7 @@ export async function scrapeGoogleMaps({
   sampleTargetTotal = 50,
   samplePerCategoryTarget = 10,
   maxConcurrency = 2,
+  onRecord = null,
 }) {
   const allRecords = [];
   const seenNames = new Set();
@@ -332,6 +334,7 @@ export async function scrapeGoogleMaps({
             if (!seenNames.has(dedupKey)) {
               seenNames.add(dedupKey);
               allRecords.push(record);
+              if (typeof onRecord === 'function') onRecord(record);
               log.info(`  [${allRecords.length}] ${record.businessName} - ${record.city}`);
             }
           }

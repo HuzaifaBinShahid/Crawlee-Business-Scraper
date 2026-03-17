@@ -15,6 +15,19 @@ function coordKey(lat, lon) {
 }
 
 /**
+ * Same key used for deduplication: name (lowercase) + rounded coords.
+ * @param {Object} record - Has businessName, latitude, longitude
+ * @returns {string}
+ */
+export function getDedupeKey(record) {
+  if (!record) return '';
+  const name = (record.businessName || '').toLowerCase().trim();
+  const lat = typeof record.latitude === 'number' ? record.latitude : parseFloat(record.latitude);
+  const lon = typeof record.longitude === 'number' ? record.longitude : parseFloat(record.longitude);
+  return `${name}|${coordKey(lat, lon)}`;
+}
+
+/**
  * Dedupe by name + location (same name and coords within ~0.001 deg = duplicate).
  * @param {Object[]} records - Records with businessName, latitude, longitude
  * @returns {Object[]} Deduplicated; first occurrence of each (name + location) kept
@@ -39,4 +52,4 @@ export function deduplicateRecords(records) {
   return out;
 }
 
-export default { deduplicateRecords };
+export default { deduplicateRecords, getDedupeKey };

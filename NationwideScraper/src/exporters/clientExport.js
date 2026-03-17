@@ -78,6 +78,16 @@ function escapeCsv(v) {
   return '"' + s + '"';
 }
 
+/** Header line for client CSV (with BOM). Use for streaming write. */
+export function getClientCsvHeaderLine() {
+  return '\uFEFF' + HEADERS.join(',') + '\n';
+}
+
+/** Single CSV row for one client record. Append after header for streaming. */
+export function clientRecordToCsvRow(clientRecord) {
+  return HEADERS.map((h) => escapeCsv(clientRecord[h])).join(',') + '\n';
+}
+
 export function exportClientCsv(clientRecords, outputPath) {
   if (!clientRecords || clientRecords.length === 0) { logger.warn('[Client export] No records for CSV'); return ''; }
   const dir = path.dirname(outputPath);
@@ -122,4 +132,4 @@ export function prepareAndExportClient(records, outputDir, countryCode, options 
   return { csvPath, ndjsonPath, count: clientRecords.length };
 }
 
-export default { toClientRecord, dedupeClientRecords, exportClientCsv, exportClientNdjson, prepareAndExportClient };
+export default { toClientRecord, dedupeClientRecords, getClientCsvHeaderLine, clientRecordToCsvRow, exportClientCsv, exportClientNdjson, prepareAndExportClient };
