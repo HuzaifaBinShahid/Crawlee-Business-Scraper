@@ -112,16 +112,33 @@ async function main() {
   const clientCsvPath = path.join(outputDir, `${clientPrefix}.csv`);
   const clientNdjsonPath = path.join(outputDir, `${clientPrefix}.ndjson`);
 
-  const internalCsv = fs.createWriteStream(csvPath, { flags: 'w', encoding: 'utf-8' });
-  const internalNdjson = fs.createWriteStream(ndjsonPath, { flags: 'w', encoding: 'utf-8' });
-  const clientCsv = fs.createWriteStream(clientCsvPath, { flags: 'w', encoding: 'utf-8' });
-  const clientNdjson = fs.createWriteStream(clientNdjsonPath, { flags: 'w', encoding: 'utf-8' });
+  const internalCsvIsNew = !fs.existsSync(csvPath);
+  const internalNdjsonIsNew = !fs.existsSync(ndjsonPath);
+  const clientCsvIsNew = !fs.existsSync(clientCsvPath);
+  const internalCsv = fs.createWriteStream(csvPath, { flags: 'a', encoding: 'utf-8' });
+  const internalNdjson = fs.createWriteStream(ndjsonPath, { flags: 'a', encoding: 'utf-8' });
+  const clientCsv = fs.createWriteStream(clientCsvPath, { flags: 'a', encoding: 'utf-8' });
+  const clientNdjson = fs.createWriteStream(clientNdjsonPath, { flags: 'a', encoding: 'utf-8' });
 
-  internalCsv.write(getCsvHeaderLine());
-  clientCsv.write(getClientCsvHeaderLine());
+  if (internalCsvIsNew) internalCsv.write(getCsvHeaderLine());
+  if (clientCsvIsNew) clientCsv.write(getClientCsvHeaderLine());
 
+  // Pre-load existing records into dedupe sets to avoid duplicates across runs
   const dedupeSet = new Set();
   const clientDedupeSet = new Set();
+  if (!internalNdjsonIsNew) {
+    try {
+      const existing = fs.readFileSync(ndjsonPath, 'utf-8').split('\n').filter((l) => l.trim());
+      for (const line of existing) {
+        try {
+          const r = JSON.parse(line);
+          const key = getDedupeKey(r);
+          if (key) { dedupeSet.add(key); clientDedupeSet.add(key); }
+        } catch (e) {}
+      }
+      logger.info(`[Resume] Loaded ${dedupeSet.size} existing records from previous run.`);
+    } catch (e) {}
+  }
   let writtenCount = 0;
 
   function onRecord(record) {
