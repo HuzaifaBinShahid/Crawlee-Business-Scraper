@@ -49,6 +49,16 @@ const argv = yargs(hideBin(process.argv))
     description: 'Output directory (default: data/samples for sample, data/output for full)',
     default: '',
   })
+  .option('city', {
+    type: 'string',
+    description: 'Scrape only this city (e.g. "Lahore"). Omit for all cities.',
+    default: '',
+  })
+  .option('headless', {
+    type: 'boolean',
+    description: 'Run browser in headless mode. Use --no-headless to see the browser.',
+    default: true,
+  })
   .option('concurrency', {
     type: 'number',
     description: 'Max concurrent browser pages',
@@ -68,10 +78,21 @@ async function main() {
     || path.join(__dirname, '..', 'data', isSample ? 'samples' : 'output');
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
+  const cityArg = (argv.city || '').trim();
   const countryCode = normalizeCountryCode(countryInput);
   const countryDisplayName = getCountryDisplayName(countryInput);
   let categories = getCategories(countryCode || countryInput);
   let locations = getLocations(countryCode || countryInput, isSample);
+
+  if (cityArg) {
+    const wanted = cityArg.toLowerCase();
+    const matched = locations.filter((loc) => loc.toLowerCase() === wanted);
+    if (matched.length === 0) {
+      logger.error(`No city "${cityArg}" found. Available: ${locations.join(', ')}`);
+      process.exit(1);
+    }
+    locations = matched;
+  }
 
   if (categoryArg) {
     const wanted = categoryArg.toLowerCase();
@@ -171,6 +192,7 @@ async function main() {
     samplePerCategoryTarget: 10,
     maxConcurrency: concurrency,
     onRecord,
+    headless: argv.headless !== false,
   });
 
   const closeStream = (stream) => new Promise((resolve, reject) => {

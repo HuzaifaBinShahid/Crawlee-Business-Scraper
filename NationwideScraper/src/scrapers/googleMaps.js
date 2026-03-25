@@ -231,6 +231,7 @@ function searchKey(userData) {
  * @param {number} [options.samplePerCategoryTarget=10]
  * @param {number} [options.maxConcurrency=2]
  * @param {function(Object)} [options.onRecord] - Called for each new record (after in-scraper dedupe). Use for incremental save.
+ * @param {boolean} [options.headless=true] - Run browser in headless mode. Pass false to see the browser.
  */
 export async function scrapeGoogleMaps({
   country,
@@ -242,6 +243,7 @@ export async function scrapeGoogleMaps({
   samplePerCategoryTarget = 10,
   maxConcurrency = 2,
   onRecord = null,
+  headless = true,
 }) {
   const allRecords = [];
   const seenNames = new Set();
@@ -280,7 +282,7 @@ export async function scrapeGoogleMaps({
     launchContext: {
       launcher: chromium,
       launchOptions: {
-        headless: process.env.HEADLESS !== 'false',
+        headless,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled', '--disable-gpu', '--disable-dev-shm-usage'],
       },
     },

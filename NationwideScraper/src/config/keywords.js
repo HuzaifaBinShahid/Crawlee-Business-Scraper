@@ -95,6 +95,18 @@ const KEYWORDS = {
           'play area',
         ],
       },
+      {
+        name: 'Gyms & Fitness',
+        keywords: [
+          'gym',
+          'fitness center',
+          'fitness gym',
+          'crossfit',
+          'yoga studio',
+          'pilates studio',
+          'workout gym',
+        ],
+      },
     ],
   },
   SA: {
