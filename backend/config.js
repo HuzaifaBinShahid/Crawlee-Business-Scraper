@@ -9,6 +9,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const rootDir = path.resolve(__dirname, '..');
+
+// GroceryStore scraper (UK / FR)
 const defaultScraperDir = path.join(rootDir, 'GroceryStore-script');
 const defaultOutputDir = path.join(defaultScraperDir, 'data', 'output');
 const defaultSamplesDir = path.join(defaultScraperDir, 'data', 'samples');
@@ -16,8 +18,22 @@ const defaultSamplesDir = path.join(defaultScraperDir, 'data', 'samples');
 export const SCRAPER_DIR = process.env.SCRAPER_DIR || defaultScraperDir;
 export const OUTPUT_DIR = process.env.OUTPUT_DIR || defaultOutputDir;
 export const SAMPLES_DIR = process.env.SAMPLES_DIR || defaultSamplesDir;
+
+// NationwideScraper (PK / SA / others)
+const defaultNationwideDir = path.join(rootDir, 'NationwideScraper');
+const defaultNationwideOutputDir = path.join(defaultNationwideDir, 'data', 'output');
+const defaultNationwideSamplesDir = path.join(defaultNationwideDir, 'data', 'samples');
+
+export const NATIONWIDE_DIR = process.env.NATIONWIDE_DIR || defaultNationwideDir;
+export const NATIONWIDE_OUTPUT_DIR = process.env.NATIONWIDE_OUTPUT_DIR || defaultNationwideOutputDir;
+export const NATIONWIDE_SAMPLES_DIR = process.env.NATIONWIDE_SAMPLES_DIR || defaultNationwideSamplesDir;
+
 export const PORT = parseInt(process.env.PORT || '5000', 10);
 
+// Countries that use NationwideScraper
+export const NATIONWIDE_COUNTRIES = ['PK', 'SA'];
+
+// Categories per scraper
 export const CATEGORIES = [
   'Halal Groceries & Butchers',
   'Car Mechanics',
@@ -37,3 +53,19 @@ export const CATEGORIES = [
   'Shipping Services',
   'Islamic Funeral Services',
 ];
+
+export const NATIONWIDE_CATEGORIES = [
+  'Health & Emergency',
+  'Commercial & Retail',
+  'Tourism & Hospitality',
+  'Food & Beverage',
+  'Spiritual & Social',
+  'Logistics & Finance',
+  'Entertainment & Sports',
+  'Gyms & Fitness',
+];
+
+export const NATIONWIDE_CITIES = {
+  PK: ['Karachi', 'Lahore', 'Islamabad', 'Rawalpindi', 'Faisalabad', 'Multan', 'Peshawar', 'Quetta', 'Sialkot', 'Gujranwala'],
+  SA: ['Riyadh', 'Jeddah', 'Mecca', 'Medina', 'Dammam', 'Khobar', 'Taif', 'Buraidah', 'Tabuk', 'Abha'],
+};

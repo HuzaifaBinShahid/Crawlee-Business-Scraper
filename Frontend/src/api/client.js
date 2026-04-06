@@ -41,8 +41,15 @@ export async function getStats() {
   return res.json();
 }
 
-export async function getCategories() {
-  const res = await fetch(`${API_BASE}/categories`);
+export async function getCategories(country) {
+  const qs = country ? `?country=${encodeURIComponent(country)}` : '';
+  const res = await fetch(`${API_BASE}/categories${qs}`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export async function getCities(country) {
+  const res = await fetch(`${API_BASE}/cities?country=${encodeURIComponent(country)}`);
   if (!res.ok) throw new Error(res.statusText);
   return res.json();
 }

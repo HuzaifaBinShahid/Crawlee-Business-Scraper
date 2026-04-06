@@ -8,6 +8,8 @@ export function FilterBar({ countryFilter, onCountryFilterChange, categoryFilter
     { value: '', label: 'All' },
     { value: 'UK', label: 'UK' },
     { value: 'FR', label: 'France' },
+    { value: 'PK', label: 'Pakistan' },
+    { value: 'SA', label: 'Saudi Arabia' },
   ];
 
   const catOptions = [

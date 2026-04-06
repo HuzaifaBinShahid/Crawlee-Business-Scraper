@@ -9,7 +9,7 @@ const PAGE_SIZE = 25;
 const COLUMNS = [
   { key: 'uniqueId', label: 'ID' },
   { key: 'businessName', label: 'Name' },
-  { key: 'businessType', label: 'Type' },
+  { key: 'businessType', label: 'Type', render: (v) => v || '—' },
   { key: 'category', label: 'Category' },
   {
     key: 'address',

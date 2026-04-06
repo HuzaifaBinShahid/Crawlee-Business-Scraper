@@ -4,7 +4,11 @@ import cors from 'cors';
 import express from 'express';
 
 import { spawn } from 'child_process';
-import { SCRAPER_DIR, OUTPUT_DIR, SAMPLES_DIR, PORT, CATEGORIES } from './config.js';
+import {
+  SCRAPER_DIR, OUTPUT_DIR, SAMPLES_DIR,
+  NATIONWIDE_DIR, NATIONWIDE_OUTPUT_DIR, NATIONWIDE_SAMPLES_DIR,
+  PORT, CATEGORIES, NATIONWIDE_CATEGORIES, NATIONWIDE_COUNTRIES, NATIONWIDE_CITIES,
+} from './config.js';
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -17,7 +21,7 @@ let currentProcess = null;
 function findLatestJsonFiles(dir) {
   if (!fs.existsSync(dir)) return [];
   const files = fs.readdirSync(dir);
-  const pattern = /^businesses_(UK|FR)_(full|sample)_(\d{4}-\d{2}-\d{2})\.json$/;
+  const pattern = /^businesses_([A-Za-z_]+)_(full|sample)_(\d{4}-\d{2}-\d{2})\.json$/;
   const matched = files
     .filter((f) => pattern.test(f))
     .map((f) => {
@@ -34,10 +38,17 @@ function findLatestJsonFiles(dir) {
   return Object.values(byCountry);
 }
 
+function getAllJsonFiles() {
+  return [
+    ...findLatestJsonFiles(OUTPUT_DIR),
+    ...findLatestJsonFiles(SAMPLES_DIR),
+    ...findLatestJsonFiles(NATIONWIDE_OUTPUT_DIR),
+    ...findLatestJsonFiles(NATIONWIDE_SAMPLES_DIR),
+  ];
+}
+
 function readData() {
-  const fromOutput = findLatestJsonFiles(OUTPUT_DIR);
-  const fromSamples = findLatestJsonFiles(SAMPLES_DIR);
-  const allFiles = [...fromOutput, ...fromSamples];
+  const allFiles = getAllJsonFiles();
   const byCountry = {};
   for (const f of allFiles) {
     const existing = byCountry[f.country];
@@ -58,9 +69,7 @@ function readData() {
 }
 
 function readStats() {
-  const fromOutput = findLatestJsonFiles(OUTPUT_DIR);
-  const fromSamples = findLatestJsonFiles(SAMPLES_DIR);
-  const allFiles = [...fromOutput, ...fromSamples];
+  const allFiles = getAllJsonFiles();
   if (allFiles.length === 0) return {};
   const latest = allFiles.sort((a, b) => b.mtime - a.mtime)[0];
   try {
@@ -72,27 +81,51 @@ function readStats() {
   }
 }
 
+function isNationwideCountry(country) {
+  return NATIONWIDE_COUNTRIES.includes((country || '').toUpperCase());
+}
+
 app.post('/api/run', (req, res) => {
   if (currentProcess) {
     return res.status(409).json({ error: 'A run is already in progress' });
   }
-  const { country, category, source = 'all', sample = false } = req.body || {};
-  if (!country || !['UK', 'FR'].includes(country)) {
-    return res.status(400).json({ error: 'country must be UK or FR' });
+  const { country, category, source = 'all', sample = false, city } = req.body || {};
+  if (!country) {
+    return res.status(400).json({ error: 'country is required' });
   }
-  const jobId = String(nextJobId++);
-  const args = ['src/main.js', '--country=' + country];
-  if (category && category !== 'all' && CATEGORIES.includes(category)) {
-    args.push('--category=' + category);
-  }
-  if (source && ['google', 'yellow', 'all'].includes(source)) {
-    args.push('--source=' + source);
-  }
-  if (sample) args.push('--sample');
 
-  const scriptPath = path.join(SCRAPER_DIR, 'src', 'main.js');
+  const nationwide = isNationwideCountry(country);
+  const jobId = String(nextJobId++);
+  let scriptPath, cwd, args;
+
+  if (nationwide) {
+    cwd = NATIONWIDE_DIR;
+    scriptPath = path.join(NATIONWIDE_DIR, 'src', 'main.js');
+    args = ['src/main.js', '--country=' + country, '--no-headless'];
+    if (category && category !== 'all' && NATIONWIDE_CATEGORIES.includes(category)) {
+      args.push('--category=' + category);
+    }
+    if (city && city !== 'all') {
+      args.push('--city=' + city);
+    }
+    if (sample) args.push('--sample');
+  } else {
+    if (!['UK', 'FR'].includes(country)) {
+      return res.status(400).json({ error: 'country must be UK, FR, PK, or SA' });
+    }
+    cwd = SCRAPER_DIR;
+    scriptPath = path.join(SCRAPER_DIR, 'src', 'main.js');
+    args = ['src/main.js', '--country=' + country];
+    if (category && category !== 'all' && CATEGORIES.includes(category)) {
+      args.push('--category=' + category);
+    }
+    if (source && ['google', 'yellow', 'all'].includes(source)) {
+      args.push('--source=' + source);
+    }
+    if (sample) args.push('--sample');
+  }
+
   const env = { ...process.env, HEADLESS: 'false' };
-  const cwd = SCRAPER_DIR;
 
   if (!fs.existsSync(scriptPath)) {
     return res.status(500).json({
@@ -207,8 +240,17 @@ app.get('/api/stats', (_req, res) => {
   }
 });
 
-app.get('/api/categories', (_req, res) => {
+app.get('/api/categories', (req, res) => {
+  const country = (req.query.country || '').toUpperCase();
+  if (isNationwideCountry(country)) {
+    return res.json(NATIONWIDE_CATEGORIES);
+  }
   res.json(CATEGORIES);
+});
+
+app.get('/api/cities', (req, res) => {
+  const country = (req.query.country || '').toUpperCase();
+  res.json(NATIONWIDE_CITIES[country] || []);
 });
 
 app.listen(PORT, () => {

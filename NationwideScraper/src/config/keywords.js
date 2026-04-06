@@ -86,7 +86,6 @@ const KEYWORDS = {
       {
         name: 'Entertainment & Sports',
         keywords: [
-          'gym',
           'sports club',
           'stadium',
           'cinema',
@@ -190,13 +189,24 @@ const KEYWORDS = {
       {
         name: 'Entertainment & Sports',
         keywords: [
-          'gym',
           'sports club',
           'stadium',
           'cinema',
           'theater',
           'kids entertainment',
           'play area',
+        ],
+      },
+      {
+        name: 'Gyms & Fitness',
+        keywords: [
+          'gym',
+          'fitness center',
+          'fitness gym',
+          'crossfit',
+          'yoga studio',
+          'pilates studio',
+          'workout gym',
         ],
       },
     ],
