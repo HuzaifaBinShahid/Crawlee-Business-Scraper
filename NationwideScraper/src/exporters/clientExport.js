@@ -41,6 +41,7 @@ export function toClientRecord(record) {
     opening_hours: (record.openingHours || '').trim() || null,
     rating: record.rating ?? null,
     review_count: record.review_count ?? null,
+    scraped_at: record.scraped_at || new Date().toISOString(),
   };
 }
 
@@ -69,7 +70,7 @@ export function dedupeClientRecords(records) {
   return out;
 }
 
-const HEADERS = ['external_id', 'name', 'category_raw', 'lat', 'lon', 'address', 'city', 'postcode', 'country_code', 'phone', 'website', 'source', 'source_url', 'opening_hours', 'rating', 'review_count'];
+const HEADERS = ['external_id', 'name', 'category_raw', 'lat', 'lon', 'address', 'city', 'postcode', 'country_code', 'phone', 'website', 'source', 'source_url', 'opening_hours', 'rating', 'review_count', 'scraped_at'];
 
 function escapeCsv(v) {
   if (v === null || v === undefined) return '""';

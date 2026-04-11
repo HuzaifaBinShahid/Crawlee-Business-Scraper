@@ -99,6 +99,7 @@ export function normalizeRecord(record, countryCode = null) {
     facebook: validateSocialMedia(record.facebook, 'facebook'),
     instagram: validateSocialMedia(record.instagram, 'instagram'),
     tiktok: validateSocialMedia(record.tiktok, 'tiktok'),
+    scraped_at: record.scraped_at || new Date().toISOString(),
   };
 }
 

@@ -25,6 +25,7 @@ const CSV_COLUMNS = [
   { key: 'rating', header: 'Rating' },
   { key: 'review_count', header: 'Review Count' },
   { key: 'source', header: 'Data Source' },
+  { key: 'scraped_at', header: 'Scraped At' },
 ];
 
 function escapeCsvValue(value) {

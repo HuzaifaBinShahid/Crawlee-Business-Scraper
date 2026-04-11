@@ -64,6 +64,21 @@ const argv = yargs(hideBin(process.argv))
     description: 'Max concurrent browser pages',
     default: 2,
   })
+  .option('min-delay', {
+    type: 'number',
+    description: 'Minimum delay between requests in ms',
+    default: 2000,
+  })
+  .option('max-delay', {
+    type: 'number',
+    description: 'Maximum delay between requests in ms',
+    default: 5000,
+  })
+  .option('proxy', {
+    type: 'string',
+    description: 'Comma-separated list of proxy URLs (e.g. http://user:pass@host:port)',
+    default: '',
+  })
   .help()
   .alias('help', 'h')
   .parse();
@@ -182,6 +197,10 @@ async function main() {
     writtenCount++;
   }
 
+  const minDelay = Math.max(500, argv['min-delay'] || 2000);
+  const maxDelay = Math.max(minDelay, argv['max-delay'] || 5000);
+  const proxies = argv.proxy ? argv.proxy.split(',').map((s) => s.trim()).filter(Boolean) : [];
+
   const records = await scrapeGoogleMaps({
     country: countryCode || countryInput,
     countryDisplayName,
@@ -193,6 +212,9 @@ async function main() {
     maxConcurrency: concurrency,
     onRecord,
     headless: argv.headless !== false,
+    minDelay,
+    maxDelay,
+    proxies,
   });
 
   const closeStream = (stream) => new Promise((resolve, reject) => {

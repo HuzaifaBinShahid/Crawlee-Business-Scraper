@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import cors from 'cors';
 import express from 'express';
@@ -17,6 +18,11 @@ app.use(express.json());
 const jobs = new Map();
 let nextJobId = 1;
 let currentProcess = null;
+let currentPauseFile = null;
+
+// Job queue for batch processing
+let jobQueue = [];
+let isQueueRunning = false;
 
 function findLatestJsonFiles(dir) {
   if (!fs.existsSync(dir)) return [];
@@ -85,17 +91,19 @@ function isNationwideCountry(country) {
   return NATIONWIDE_COUNTRIES.includes((country || '').toUpperCase());
 }
 
-app.post('/api/run', (req, res) => {
-  if (currentProcess) {
-    return res.status(409).json({ error: 'A run is already in progress' });
+function cleanupPauseFile() {
+  if (currentPauseFile) {
+    try { fs.unlinkSync(currentPauseFile); } catch (_) { }
+    currentPauseFile = null;
   }
-  const { country, category, source = 'all', sample = false, city } = req.body || {};
-  if (!country) {
-    return res.status(400).json({ error: 'country is required' });
-  }
+}
 
+/** Core function to start a scraper job. Used by both /api/run and queue processing. */
+function startJob(config) {
+  const { country, category, source = 'all', sample = false, city, minDelay, maxDelay, proxies } = config;
+  const jobId = config.jobId || String(nextJobId++);
   const nationwide = isNationwideCountry(country);
-  const jobId = String(nextJobId++);
+
   let scriptPath, cwd, args;
 
   if (nationwide) {
@@ -109,10 +117,12 @@ app.post('/api/run', (req, res) => {
       args.push('--city=' + city);
     }
     if (sample) args.push('--sample');
-  } else {
-    if (!['UK', 'FR'].includes(country)) {
-      return res.status(400).json({ error: 'country must be UK, FR, PK, or SA' });
+    if (minDelay != null) args.push('--min-delay=' + Math.max(500, Number(minDelay) || 2000));
+    if (maxDelay != null) args.push('--max-delay=' + Math.max(1000, Number(maxDelay) || 5000));
+    if (proxies && proxies.length) {
+      args.push('--proxy=' + proxies.join(','));
     }
+  } else {
     cwd = SCRAPER_DIR;
     scriptPath = path.join(SCRAPER_DIR, 'src', 'main.js');
     args = ['src/main.js', '--country=' + country];
@@ -125,31 +135,34 @@ app.post('/api/run', (req, res) => {
     if (sample) args.push('--sample');
   }
 
-  const env = { ...process.env, HEADLESS: 'false' };
+  // Generate pause file for this job
+  const pauseFile = path.join(os.tmpdir(), `scraper_pause_${jobId}.flag`);
+  currentPauseFile = pauseFile;
+  const env = { ...process.env, HEADLESS: 'false', PAUSE_FILE: pauseFile };
 
   if (!fs.existsSync(scriptPath)) {
-    return res.status(500).json({
-      error: `Scraper script not found at ${scriptPath}. Check SCRAPER_DIR (${SCRAPER_DIR}).`,
-    });
+    const job = { status: 'failed', error: `Script not found: ${scriptPath}`, startTime: Date.now(), endTime: Date.now(), stderr: [], stdout: [] };
+    jobs.set(jobId, job);
+    return { jobId, error: job.error };
   }
 
   console.log('[scraper] Spawning:', { cwd, scriptPath, args });
   const child = spawn('node', [scriptPath, ...args.slice(1)], { env, cwd });
 
-  const job = { status: 'running', startTime: Date.now(), stderr: [], stdout: [] };
+  const job = { status: 'running', startTime: Date.now(), stderr: [], stdout: [], config };
   jobs.set(jobId, job);
   currentProcess = { jobId, child };
 
   child.stderr?.on('data', (chunk) => {
     const line = String(chunk).trim();
     if (line) job.stderr.push(line);
-    if (job.stderr.length > 50) job.stderr.shift();
+    if (job.stderr.length > 200) job.stderr.shift();
   });
 
   child.stdout?.on('data', (chunk) => {
     const line = String(chunk).trim();
     if (line) job.stdout.push(line);
-    if (job.stdout.length > 50) job.stdout.shift();
+    if (job.stdout.length > 200) job.stdout.shift();
   });
 
   child.on('close', (code, signal) => {
@@ -165,7 +178,10 @@ app.post('/api/run', (req, res) => {
           : tail || `Process exited with code ${code}.`;
       }
     }
+    cleanupPauseFile();
     currentProcess = null;
+    // Process next job in queue if any
+    processNextInQueue();
   });
 
   child.on('error', (err) => {
@@ -174,10 +190,44 @@ app.post('/api/run', (req, res) => {
       job.error = err.message;
       job.endTime = Date.now();
     }
+    cleanupPauseFile();
     currentProcess = null;
+    processNextInQueue();
   });
 
-  res.json({ jobId });
+  return { jobId };
+}
+
+function processNextInQueue() {
+  if (currentProcess) return;
+  if (jobQueue.length === 0) {
+    isQueueRunning = false;
+    return;
+  }
+  const next = jobQueue.shift();
+  startJob(next);
+}
+
+// ─── API Routes ──────────────────────────────────────────────────────────────
+
+app.post('/api/run', (req, res) => {
+  if (currentProcess) {
+    return res.status(409).json({ error: 'A run is already in progress' });
+  }
+  const { country, category, source, sample, city, minDelay, maxDelay, proxies } = req.body || {};
+  if (!country) {
+    return res.status(400).json({ error: 'country is required' });
+  }
+  const nationwide = isNationwideCountry(country);
+  if (!nationwide && !['UK', 'FR'].includes(country)) {
+    return res.status(400).json({ error: 'country must be UK, FR, PK, or SA' });
+  }
+
+  const result = startJob({ country, category, source, sample, city, minDelay, maxDelay, proxies });
+  if (result.error) {
+    return res.status(500).json({ error: result.error });
+  }
+  res.json({ jobId: result.jobId });
 });
 
 app.post('/api/run/stop', (req, res) => {
@@ -191,8 +241,32 @@ app.post('/api/run/stop', (req, res) => {
     job.endTime = Date.now();
   }
   currentProcess.child.kill('SIGTERM');
+  cleanupPauseFile();
   currentProcess = null;
+  // Clear remaining queue when stopping
+  jobQueue = [];
+  isQueueRunning = false;
   res.json({ stopped: true });
+});
+
+app.post('/api/run/pause', (req, res) => {
+  if (!currentProcess || !currentPauseFile) {
+    return res.status(409).json({ error: 'No run in progress' });
+  }
+  fs.writeFileSync(currentPauseFile, '1');
+  const job = jobs.get(currentProcess.jobId);
+  if (job) job.status = 'paused';
+  res.json({ paused: true });
+});
+
+app.post('/api/run/resume', (req, res) => {
+  if (!currentProcess || !currentPauseFile) {
+    return res.status(409).json({ error: 'No run in progress' });
+  }
+  try { fs.unlinkSync(currentPauseFile); } catch (_) { }
+  const job = jobs.get(currentProcess.jobId);
+  if (job) job.status = 'running';
+  res.json({ resumed: true });
 });
 
 app.get('/api/run/status', (req, res) => {
@@ -221,6 +295,69 @@ app.get('/api/run/status', (req, res) => {
     error: lastJob?.error,
   });
 });
+
+app.get('/api/run/logs', (req, res) => {
+  if (currentProcess) {
+    const job = jobs.get(currentProcess.jobId);
+    return res.json({
+      stdout: job?.stdout || [],
+      stderr: job?.stderr || [],
+      status: job?.status || 'running',
+    });
+  }
+  const lastJobId = Array.from(jobs.keys()).pop();
+  const lastJob = lastJobId ? jobs.get(lastJobId) : null;
+  res.json({
+    stdout: lastJob?.stdout || [],
+    stderr: lastJob?.stderr || [],
+    status: lastJob?.status || 'idle',
+  });
+});
+
+// ─── Queue / Batch ───────────────────────────────────────────────────────────
+
+app.post('/api/queue', (req, res) => {
+  const { jobs: jobConfigs } = req.body || {};
+  if (!Array.isArray(jobConfigs) || jobConfigs.length === 0) {
+    return res.status(400).json({ error: 'jobs array is required' });
+  }
+  const valid = jobConfigs.filter((c) => c.country);
+  if (!valid.length) {
+    return res.status(400).json({ error: 'Each job needs a country' });
+  }
+
+  const addedIds = [];
+  for (const config of valid) {
+    const jobId = String(nextJobId++);
+    jobs.set(jobId, { status: 'queued', config, startTime: null, stdout: [], stderr: [] });
+    jobQueue.push({ ...config, jobId });
+    addedIds.push(jobId);
+  }
+  isQueueRunning = true;
+  processNextInQueue();
+  res.json({ queued: addedIds.length, jobIds: addedIds });
+});
+
+app.get('/api/queue/status', (req, res) => {
+  const pending = jobQueue.map((c) => ({
+    jobId: c.jobId,
+    country: c.country,
+    category: c.category || 'all',
+    city: c.city || 'all',
+  }));
+  const currentJobId = currentProcess?.jobId || null;
+  const currentJob = currentJobId ? jobs.get(currentJobId) : null;
+  res.json({
+    isRunning: !!currentProcess,
+    isQueueRunning,
+    currentJobId,
+    currentConfig: currentJob?.config || null,
+    pendingCount: pending.length,
+    pending,
+  });
+});
+
+// ─── Data / Stats / Config ───────────────────────────────────────────────────
 
 app.get('/api/data', (_req, res) => {
   try {

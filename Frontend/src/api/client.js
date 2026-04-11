@@ -29,6 +29,30 @@ export async function stopScraper() {
   return res.json();
 }
 
+export async function pauseScraper() {
+  const res = await fetch(`${API_BASE}/run/pause`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+export async function resumeScraper() {
+  const res = await fetch(`${API_BASE}/run/resume`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+export async function getLogs() {
+  const res = await fetch(`${API_BASE}/run/logs`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
 export async function getData() {
   const res = await fetch(`${API_BASE}/data`);
   if (!res.ok) throw new Error(res.statusText);
@@ -50,6 +74,25 @@ export async function getCategories(country) {
 
 export async function getCities(country) {
   const res = await fetch(`${API_BASE}/cities?country=${encodeURIComponent(country)}`);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json();
+}
+
+export async function submitQueue(jobs) {
+  const res = await fetch(`${API_BASE}/queue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobs }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+export async function getQueueStatus() {
+  const res = await fetch(`${API_BASE}/queue/status`);
   if (!res.ok) throw new Error(res.statusText);
   return res.json();
 }

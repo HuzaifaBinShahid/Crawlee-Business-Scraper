@@ -48,7 +48,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!runState.jobId || runState.status !== 'running') return;
+    if (!runState.jobId || (runState.status !== 'running' && runState.status !== 'paused')) return;
     pollStatus(runState.jobId);
     return () => {
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
@@ -58,8 +58,8 @@ function App() {
   useEffect(() => {
     getRunStatus()
       .then((res) => {
-        if (res.status === 'running' && res.jobId) {
-          setRunState({ jobId: res.jobId, status: 'running', error: null, success: null });
+        if ((res.status === 'running' || res.status === 'paused') && res.jobId) {
+          setRunState({ jobId: res.jobId, status: res.status, error: null, success: null });
         }
       })
       .catch(() => {});

@@ -3,10 +3,11 @@
  * Builds query as "keyword in location, countryName". Sample mode: stop at 50 records, ~10 per category.
  */
 
-import { PlaywrightCrawler } from 'crawlee';
+import { PlaywrightCrawler, ProxyConfiguration } from 'crawlee';
 import { chromium } from 'playwright';
 import logger from '../utils/logger.js';
 import { randomDelay } from '../utils/rateLimiter.js';
+import { checkPause } from '../utils/pauseCheck.js';
 import { normalizeRecord } from '../processors/normalizer.js';
 import { getSearchUrl } from '../config/sources.js';
 
@@ -130,7 +131,7 @@ function parseAddress(address) {
 async function extractBusinessDetails(page, listing, categoryName, countryCode, cardData, searchLocation) {
   try {
     await listing.click();
-    await randomDelay(2000, 4000);
+    await randomDelay(2000, 4000); // Detail page load — keep fixed for reliability
     await page.waitForSelector('h1.DUwDvf, h1.fontHeadlineLarge', { timeout: 10000 }).catch(() => null);
     const businessName = await page.$eval('h1.DUwDvf, h1.fontHeadlineLarge', (el) => el.textContent?.trim()).catch(() => cardData.businessName || '');
     if (!businessName) return null;
@@ -244,6 +245,9 @@ export async function scrapeGoogleMaps({
   maxConcurrency = 2,
   onRecord = null,
   headless = true,
+  minDelay = 2000,
+  maxDelay = 5000,
+  proxies = [],
 }) {
   const allRecords = [];
   const seenNames = new Set();
@@ -277,8 +281,15 @@ export async function scrapeGoogleMaps({
   }
 
   logger.info(`[Google Maps] Total search URLs: ${searchRequests.length}`);
+  if (proxies.length) logger.info(`[Google Maps] Using ${proxies.length} proxies with rotation`);
+  logger.info(`[Google Maps] Delay range: ${minDelay}-${maxDelay}ms`);
+
+  const proxyConfiguration = proxies.length
+    ? new ProxyConfiguration({ proxyUrls: proxies })
+    : undefined;
 
   const crawler = new PlaywrightCrawler({
+    proxyConfiguration,
     launchContext: {
       launcher: chromium,
       launchOptions: {
@@ -305,7 +316,7 @@ export async function scrapeGoogleMaps({
 
       try {
         const consentBtn = await page.$('button[aria-label="Accept all"], form[action*="consent"] button, button:has-text("Accept"), button:has-text("Accepter")');
-        if (consentBtn) { await consentBtn.click(); await randomDelay(1000, 2000); }
+        if (consentBtn) { await consentBtn.click(); await randomDelay(minDelay, maxDelay); }
       } catch (e) {}
 
       await page.waitForSelector('div[role="feed"] a.hfpxzc, div[role="feed"] div[role="article"]', { timeout: 15000 }).catch(() => {
@@ -321,8 +332,10 @@ export async function scrapeGoogleMaps({
         ? Math.min(samplePerCategoryTarget, listingCards.length)
         : listingCards.length;
 
+      await checkPause();
       for (let i = 0; i < maxListings; i++) {
         if (isSample && sampleTargetTotal > 0 && allRecords.length >= sampleTargetTotal) break;
+        await checkPause();
         try {
           const currentCards = await page.$$('div[role="feed"] div[role="article"]');
           if (i >= currentCards.length) break;
@@ -341,13 +354,13 @@ export async function scrapeGoogleMaps({
             }
           }
           await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
-          await randomDelay(1500, 2500);
+          await randomDelay(minDelay, maxDelay);
         } catch (error) {
           log.error(`Error processing listing ${i}: ${error.message}`);
           try { await page.goBack({ waitUntil: 'domcontentloaded' }); } catch (e) { break; }
         }
       }
-      await randomDelay(2000, 4000);
+      await randomDelay(minDelay, maxDelay);
     },
     failedRequestHandler: async ({ request, log }) => {
       log.error(`Request failed after retries: ${request.url}`);
