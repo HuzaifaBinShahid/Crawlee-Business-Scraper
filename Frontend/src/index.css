@@ -26,6 +26,7 @@
   --animate-fade-in: fade-in 0.3s ease-out;
   --animate-fade-in-up: fade-in-up 0.45s ease-out;
   --animate-slide-in-left: slide-in-left 0.25s ease-out;
+  --animate-slide-in-right: slide-in-right 0.6s cubic-bezier(0.16, 1, 0.3, 1);
   --animate-scale-in: scale-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 
   @keyframes fade-in {
@@ -38,6 +39,10 @@
   }
   @keyframes slide-in-left {
     0% { opacity: 0; transform: translateX(-8px); }
+    100% { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes slide-in-right {
+    0% { opacity: 0; transform: translateX(40px); }
     100% { opacity: 1; transform: translateX(0); }
   }
   @keyframes scale-in {

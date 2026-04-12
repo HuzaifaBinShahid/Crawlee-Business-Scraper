@@ -37,7 +37,7 @@ export function LogsPanel({ isActive }) {
   if (lines.length === 0 && !isActive) return null;
 
   return (
-    <div className="mt-6 w-full max-w-lg mx-auto px-4 animate-fade-in">
+    <div className="w-full animate-fade-in mb-4">
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 transition-colors mb-2"
@@ -52,7 +52,7 @@ export function LogsPanel({ isActive }) {
         <div className="bg-slate-950 border border-slate-700 rounded-xl overflow-hidden">
           <pre
             ref={preRef}
-            className="p-4 text-xs font-mono leading-relaxed max-h-64 overflow-y-auto scrollbar-thin"
+            className="p-4 text-xs font-mono leading-relaxed max-h-[28rem] overflow-y-auto scrollbar-thin"
           >
             {lines.length === 0 ? (
               <span className="text-slate-500">Waiting for logs...</span>
