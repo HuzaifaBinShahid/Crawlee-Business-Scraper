@@ -151,10 +151,17 @@ export function RunScraperTab({ runState, setRunState }) {
   ];
 
   let fieldIndex = 0;
+  const sidePanelActive = isRunning;
 
   return (
     <div className="min-h-[calc(100vh-6rem)] flex flex-col items-center justify-center py-8 animate-fade-in">
-      <div className="w-full max-w-lg mx-auto px-4">
+      <div
+        className={`w-full flex gap-6 px-4 transition-all duration-700 ease-out ${
+          sidePanelActive ? 'max-w-6xl items-start' : 'max-w-lg flex-col items-center'
+        }`}
+      >
+        {/* LEFT: Form box */}
+        <div className={`w-full transition-all duration-700 ease-out ${sidePanelActive ? 'max-w-md flex-shrink-0' : 'max-w-lg mx-auto'}`}>
         <h1 className="text-2xl font-semibold text-stone-100 text-center mb-8 animate-fade-in-up" style={fieldDelay(fieldIndex++)}>
           Collect Data
         </h1>
@@ -203,10 +210,12 @@ export function RunScraperTab({ runState, setRunState }) {
             </div>
           )}
 
-          {/* Speed control sliders */}
+          {/* Rate limiting sliders */}
           {isNationwide && (
             <div className="mb-5 animate-fade-in-up" style={fieldDelay(fieldIndex++)}>
-              <label className="block text-sm font-medium text-slate-300 mb-2">Speed Control</label>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Rate Limiting <span className="text-slate-500 font-normal text-xs">(delay between requests)</span>
+              </label>
               <div className="space-y-3 bg-slate-900/50 rounded-lg p-3 border border-slate-700">
                 <div>
                   <div className="flex justify-between text-xs text-slate-400 mb-1">
@@ -343,17 +352,25 @@ export function RunScraperTab({ runState, setRunState }) {
           {status === 'running' && !isPaused && (
             <div className="mt-5 flex items-center gap-2 px-4 py-3 rounded-xl bg-sky-900/50 text-sky-200 border border-sky-700 animate-fade-in">
               <Info className="w-5 h-5 flex-shrink-0" />
-              <span>Scraper is running with browser visible. You can switch tabs—it will keep running. This may take several minutes.</span>
+              <span>Scraper is running. You can switch tabs—it will keep running.</span>
             </div>
           )}
         </div>
+        </div>
+        {/* END LEFT */}
+
+        {/* RIGHT: Logs + Queue panel — slides in when running */}
+        {sidePanelActive && (
+          <div className="flex-1 min-w-0 animate-slide-in-right">
+            <h2 className="text-lg font-semibold text-stone-100 mb-4 flex items-center gap-2">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              Live Activity
+            </h2>
+            <LogsPanel isActive={isRunning} />
+            <QueueStatus />
+          </div>
+        )}
       </div>
-
-      {/* Live Logs */}
-      <LogsPanel isActive={isRunning} />
-
-      {/* Queue Status */}
-      <QueueStatus />
     </div>
   );
 }

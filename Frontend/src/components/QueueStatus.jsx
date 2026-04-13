@@ -21,7 +21,7 @@ export function QueueStatus() {
   if (!queue || (!queue.isQueueRunning && queue.pendingCount === 0 && !queue.isRunning)) return null;
 
   return (
-    <div className="mt-4 w-full max-w-lg mx-auto px-4 animate-fade-in">
+    <div className="w-full animate-fade-in">
       <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4">
         <div className="flex items-center gap-2 text-sm font-medium text-slate-200 mb-3">
           <ListOrdered className="w-4 h-4" />
