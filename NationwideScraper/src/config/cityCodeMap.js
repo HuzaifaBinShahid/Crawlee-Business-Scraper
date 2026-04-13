@@ -1,33 +1,24 @@
 /**
  * City name to 3-letter code for external_id: {COUNTRY}-{CITY_CODE}-{PADDED_NUM}
+ * Codes are derived from src/config/cities/<country>.json at module load.
  * Example: PK-KHI-000001, SA-RUH-000001
  */
 
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+
+function buildCodeMap(file) {
+  try {
+    return Object.fromEntries(require(file).map((c) => [c.name.toLowerCase(), c.code]));
+  } catch (e) {
+    return {};
+  }
+}
+
 const CITY_CODES = {
-  PK: {
-    karachi: 'KHI',
-    lahore: 'LHE',
-    islamabad: 'ISB',
-    rawalpindi: 'RWP',
-    faisalabad: 'FSD',
-    multan: 'MUL',
-    peshawar: 'PSH',
-    quetta: 'QUE',
-    sialkot: 'SIA',
-    gujranwala: 'GUJ',
-  },
-  SA: {
-    riyadh: 'RUH',
-    jeddah: 'JED',
-    mecca: 'MEC',
-    medina: 'MED',
-    dammam: 'DAM',
-    khobar: 'KHO',
-    taif: 'TAI',
-    buraidah: 'BUR',
-    tabuk: 'TAB',
-    abha: 'ABH',
-  },
+  PK: buildCodeMap('./cities/pk.json'),
+  SA: buildCodeMap('./cities/sa.json'),
 };
 
 /**

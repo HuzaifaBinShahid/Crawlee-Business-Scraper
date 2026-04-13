@@ -3,8 +3,16 @@
  * Usage: node src/main.js --country=PK [--sample] [--category="Health & Emergency"]
  */
 
+// Let Crawlee use 70% of system RAM instead of the default 25% — on an 8GB laptop
+// the default pretends only 2GB is available, which triggers false "memory overloaded" warnings.
+// Must be set BEFORE crawlee is imported (via scrapers/googleMaps.js).
+if (!process.env.CRAWLEE_AVAILABLE_MEMORY_RATIO) {
+  process.env.CRAWLEE_AVAILABLE_MEMORY_RATIO = '0.7';
+}
+
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { fileURLToPath } from 'url';
@@ -17,8 +25,7 @@ import { isWithinSampleRegion } from './config/sampleBounds.js';
 import { scrapeGoogleMaps } from './scrapers/googleMaps.js';
 import { getDedupeKey } from './processors/deduplicator.js';
 import { generateId, resetCounters } from './utils/idGenerator.js';
-import { getCsvHeaderLine, recordToCsvRow } from './exporters/csvExporter.js';
-import { recordToExportShape, finishJsonFromNdjson } from './exporters/jsonExporter.js';
+import { finishJsonFromNdjson } from './exporters/jsonExporter.js';
 import { getClientCsvHeaderLine, clientRecordToCsvRow, toClientRecord } from './exporters/clientExport.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -61,8 +68,8 @@ const argv = yargs(hideBin(process.argv))
   })
   .option('concurrency', {
     type: 'number',
-    description: 'Max concurrent browser pages',
-    default: 2,
+    description: 'Max concurrent browser pages (forced to 1 — multiple tabs are unstable)',
+    default: 1,
   })
   .option('min-delay', {
     type: 'number',
@@ -87,7 +94,7 @@ async function main() {
   const countryInput = (argv.country || '').trim();
   const isSample = argv.sample === true;
   const categoryArg = (argv.category || '').trim();
-  const concurrency = Math.max(1, Math.min(argv.concurrency || 2, 3));
+  const concurrency = 1; // FORCED — multi-tab Playwright + Google Maps leaks elementHandles
 
   const outputDir = argv.output
     || path.join(__dirname, '..', 'data', isSample ? 'samples' : 'output');
@@ -135,45 +142,54 @@ async function main() {
 
   resetCounters();
 
-  const timestamp = new Date().toISOString().split('T')[0];
-  const mode = isSample ? 'sample' : 'full';
   const countrySlug = countryCode || countryInput.replace(/\s+/g, '_');
-  const filePrefix = `businesses_${countrySlug}_${mode}_${timestamp}`;
   const clientSuffix = isSample ? `_sample_50` : '_full';
-  const clientPrefix = `businesses_${countrySlug}_client${clientSuffix}_${timestamp}`;
+  const clientPrefix = `businesses_${countrySlug}_client${clientSuffix}`;
 
-  const csvPath = path.join(outputDir, `${filePrefix}.csv`);
-  const ndjsonPath = path.join(outputDir, `${filePrefix}.ndjson`);
-  const jsonPath = path.join(outputDir, `${filePrefix}.json`);
+  // Final output: ONLY these two files (CSV + JSON). NDJSON is a temporary streaming buffer,
+  // deleted after the final JSON is written.
   const clientCsvPath = path.join(outputDir, `${clientPrefix}.csv`);
+  const clientJsonPath = path.join(outputDir, `${clientPrefix}.json`);
   const clientNdjsonPath = path.join(outputDir, `${clientPrefix}.ndjson`);
 
-  const internalCsvIsNew = !fs.existsSync(csvPath);
-  const internalNdjsonIsNew = !fs.existsSync(ndjsonPath);
   const clientCsvIsNew = !fs.existsSync(clientCsvPath);
-  const internalCsv = fs.createWriteStream(csvPath, { flags: 'a', encoding: 'utf-8' });
-  const internalNdjson = fs.createWriteStream(ndjsonPath, { flags: 'a', encoding: 'utf-8' });
   const clientCsv = fs.createWriteStream(clientCsvPath, { flags: 'a', encoding: 'utf-8' });
   const clientNdjson = fs.createWriteStream(clientNdjsonPath, { flags: 'a', encoding: 'utf-8' });
 
-  if (internalCsvIsNew) internalCsv.write(getCsvHeaderLine());
   if (clientCsvIsNew) clientCsv.write(getClientCsvHeaderLine());
 
-  // Pre-load existing records into dedupe sets to avoid duplicates across runs
+  // Pre-load existing records into dedupe set to avoid duplicates across runs.
+  // Prefer the JSON (final output from last complete run); fall back to NDJSON
+  // (leftover from an interrupted run).
   const dedupeSet = new Set();
-  const clientDedupeSet = new Set();
-  if (!internalNdjsonIsNew) {
+  async function loadDedupeFromFile(filePath, isNdjson) {
     try {
-      const existing = fs.readFileSync(ndjsonPath, 'utf-8').split('\n').filter((l) => l.trim());
-      for (const line of existing) {
-        try {
-          const r = JSON.parse(line);
-          const key = getDedupeKey(r);
-          if (key) { dedupeSet.add(key); clientDedupeSet.add(key); }
-        } catch (e) {}
+      if (isNdjson) {
+        const rl = readline.createInterface({ input: fs.createReadStream(filePath, 'utf-8'), crlfDelay: Infinity });
+        for await (const line of rl) {
+          if (!line.trim()) continue;
+          try {
+            const r = JSON.parse(line);
+            const key = getDedupeKey({ businessName: r.name, latitude: r.lat, longitude: r.lon });
+            if (key) dedupeSet.add(key);
+          } catch (e) {}
+        }
+      } else {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        const arr = Array.isArray(parsed) ? parsed : parsed.data || [];
+        for (const r of arr) {
+          const key = getDedupeKey({ businessName: r.name, latitude: r.lat, longitude: r.lon });
+          if (key) dedupeSet.add(key);
+        }
       }
-      logger.info(`[Resume] Loaded ${dedupeSet.size} existing records from previous run.`);
     } catch (e) {}
+  }
+  if (fs.existsSync(clientJsonPath)) {
+    await loadDedupeFromFile(clientJsonPath, false);
+    logger.info(`[Resume] Loaded ${dedupeSet.size} existing records from ${path.basename(clientJsonPath)}.`);
+  } else if (fs.existsSync(clientNdjsonPath)) {
+    await loadDedupeFromFile(clientNdjsonPath, true);
+    logger.info(`[Resume] Loaded ${dedupeSet.size} existing records from interrupted NDJSON.`);
   }
   let writtenCount = 0;
 
@@ -186,20 +202,21 @@ async function main() {
     if (dedupeSet.has(key)) return;
     dedupeSet.add(key);
     record.uniqueId = generateId(record.country || countryCode || countryInput, record.city || '');
-    internalCsv.write(recordToCsvRow(record));
-    internalNdjson.write(JSON.stringify(recordToExportShape(record)) + '\n');
-    if (!clientDedupeSet.has(key)) {
-      clientDedupeSet.add(key);
-      const clientRecord = toClientRecord(record);
-      clientCsv.write(clientRecordToCsvRow(clientRecord));
-      clientNdjson.write(JSON.stringify(clientRecord) + '\n');
-    }
+    const clientRecord = toClientRecord(record);
+    clientCsv.write(clientRecordToCsvRow(clientRecord));
+    clientNdjson.write(JSON.stringify(clientRecord) + '\n');
     writtenCount++;
   }
 
   const minDelay = Math.max(500, argv['min-delay'] || 2000);
   const maxDelay = Math.max(minDelay, argv['max-delay'] || 5000);
   const proxies = argv.proxy ? argv.proxy.split(',').map((s) => s.trim()).filter(Boolean) : [];
+
+  // Skip records already in dedupeSet before extracting full details (saves time)
+  function isDuplicate(name, latitude, longitude) {
+    const key = getDedupeKey({ businessName: name, latitude, longitude });
+    return key && dedupeSet.has(key);
+  }
 
   const records = await scrapeGoogleMaps({
     country: countryCode || countryInput,
@@ -211,6 +228,7 @@ async function main() {
     samplePerCategoryTarget: 10,
     maxConcurrency: concurrency,
     onRecord,
+    isDuplicate,
     headless: argv.headless !== false,
     minDelay,
     maxDelay,
@@ -221,33 +239,31 @@ async function main() {
     stream.end((err) => (err ? reject(err) : resolve()));
   });
   await Promise.all([
-    closeStream(internalCsv),
-    closeStream(internalNdjson),
     closeStream(clientCsv),
     closeStream(clientNdjson),
   ]);
 
-  if (writtenCount > 0) {
-    finishJsonFromNdjson(ndjsonPath, jsonPath, writtenCount);
+  if (writtenCount > 0 || fs.existsSync(clientNdjsonPath)) {
+    // Rebuild the final JSON from the full NDJSON (which contains prior-run records too).
+    await finishJsonFromNdjson(clientNdjsonPath, clientJsonPath, null);
+    // NDJSON was just a streaming buffer — the JSON is authoritative now.
+    try { fs.unlinkSync(clientNdjsonPath); } catch (e) {}
   }
 
-  if (!records.length && writtenCount === 0) {
+  if (writtenCount === 0 && dedupeSet.size === 0) {
     logger.warn('No records scraped. Exiting.');
-    try { fs.unlinkSync(csvPath); } catch (e) {}
-    try { fs.unlinkSync(ndjsonPath); } catch (e) {}
     try { fs.unlinkSync(clientCsvPath); } catch (e) {}
-    try { fs.unlinkSync(clientNdjsonPath); } catch (e) {}
+    try { fs.unlinkSync(clientJsonPath); } catch (e) {}
     process.exit(0);
   }
 
   logger.info('='.repeat(60));
   logger.info('SCRAPING COMPLETE');
   logger.info('='.repeat(60));
-  logger.info(`Total records saved: ${writtenCount}`);
-  logger.info(`Internal CSV:  ${csvPath}`);
-  logger.info(`Internal JSON: ${jsonPath}`);
-  logger.info(`Client CSV:    ${clientCsvPath}`);
-  logger.info(`Client NDJSON: ${clientNdjsonPath}`);
+  logger.info(`New records this run: ${writtenCount}`);
+  logger.info(`Total unique records: ${dedupeSet.size}`);
+  logger.info(`Client CSV:  ${clientCsvPath}`);
+  logger.info(`Client JSON: ${clientJsonPath}`);
   logger.info('='.repeat(60));
 }
 

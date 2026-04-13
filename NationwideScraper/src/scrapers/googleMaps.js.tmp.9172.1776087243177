@@ -450,24 +450,25 @@ export async function scrapeGoogleMaps({
         headless,
         args: [
           '--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled',
-          '--disable-dev-shm-usage',
+          '--disable-gpu', '--disable-dev-shm-usage',
           '--disable-extensions', '--disable-background-networking', '--disable-default-apps',
           '--disable-sync', '--disable-translate', '--metrics-recording-only',
           '--no-first-run', '--safebrowsing-disable-auto-update',
         ],
       },
     },
-    maxConcurrency: 1,                          // ONE tab only — multiple tabs leak elementHandles
-    navigationTimeoutSecs: 90,
-    requestHandlerTimeoutSecs: 3600,            // 60 min — dense cities can have 200+ listings via direct nav
-    maxRequestRetries: 0,                       // Retries recycle sessions and cause "context closed" errors
-    keepAlive: true,                            // Keep browser alive between requests
+    maxConcurrency: 1,               // one browser tab only — prevents session churn + stale handles
+    navigationTimeoutSecs: 60,
+    requestHandlerTimeoutSecs: 3600, // 60 min ceiling per search — dense cities with 200+ listings
+    maxRequestRetries: 0,            // retries recycle sessions and trigger "context closed" errors
+    keepAlive: true,                 // reuse browser across requests for stability
     useSessionPool: true,
-    sessionPoolOptions: { maxPoolSize: 1 },     // ONE session — no churn
+    sessionPoolOptions: { maxPoolSize: 1 },
     preNavigationHooks: [
       async ({ page }) => {
         await page.setViewportSize({ width: 1280, height: 800 });
-        // No resource blocking — load images, fonts, CSS. With concurrency=1 the memory cost is fine.
+        // No resource blocking — load images, CSS, fonts, media. User-requested
+        // for visual verification and to ensure the sidebar renders completely.
       },
     ],
     requestHandler: async ({ page, request, log }) => {
@@ -479,24 +480,24 @@ export async function scrapeGoogleMaps({
         return;
       }
 
-      // --- Consent dialog (EU/cookie acceptance) ---
       try {
         const consentBtn = await page.$('button[aria-label="Accept all"], form[action*="consent"] button, button:has-text("Accept"), button:has-text("Accepter")');
-        if (consentBtn) { await consentBtn.click(); await randomDelay(1000, 2000); }
+        if (consentBtn) { await consentBtn.click(); await randomDelay(1500, 2500); }
       } catch (e) {}
 
       await page.waitForSelector('div[role="feed"] a.hfpxzc, div[role="feed"] div[role="article"]', { timeout: 20000 }).catch(() => {
-        log.warning(`No results panel for "${keyword}" in ${location}`);
+        log.warning(`No results for "${keyword}" in ${location}`);
       });
 
-      // ---- Phase A: SCROLL THE ENTIRE FEED FIRST ----
-      await checkPause();
-      const totalCards = await scrollFullList(page, { isSample, log });
-      log.info(`Scrolled to end: ${totalCards} listings visible for "${keyword}" in ${location}`);
+      // ---- Phase A: fully scroll the list before extracting anything ----
+      log.info(`  Scrolling feed for "${keyword}" in ${location}...`);
+      const finalCardCount = await scrollFullList(page, { isSample, log });
+      log.info(`  Scroll complete: ${finalCardCount} listings in feed`);
 
-      // ---- Phase B: SNAPSHOT every listing as plain JS data (no elementHandles retained) ----
-      const listings = await page.$$eval('div[role="feed"] div[role="article"]', (articles) =>
-        articles.map((a) => {
+      // ---- Phase B: snapshot all listings as plain strings (no elementHandles retained) ----
+      const rawListings = await page.$$eval(
+        'div[role="feed"] div[role="article"]',
+        (articles) => articles.map((a) => {
           const linkEl = a.querySelector('a.hfpxzc');
           const nameEl = a.querySelector('div.qBF1Pd.fontHeadlineSmall');
           const phoneEl = a.querySelector('span.UsdlK');
@@ -504,90 +505,82 @@ export async function scrapeGoogleMaps({
           const ratingSpan = a.querySelector('span.MW4etd');
           const reviewSpan = a.querySelector('span.UY7F9');
           return {
-            href: linkEl ? linkEl.href : '',
-            name: nameEl ? (nameEl.textContent || '').trim() : '',
-            phone: phoneEl ? (phoneEl.textContent || '').trim() : '',
+            href: linkEl?.href || '',
+            name: nameEl?.textContent?.trim() || '',
+            phone: phoneEl?.textContent?.trim() || '',
             isSponsored: !!a.querySelector('span.jHLihd'),
-            ratingAria: ratingAriaEl ? (ratingAriaEl.getAttribute('aria-label') || '') : '',
-            ratingText: ratingSpan ? (ratingSpan.textContent || '').trim() : '',
-            reviewText: reviewSpan ? (reviewSpan.textContent || '').trim() : '',
+            ratingAria: ratingAriaEl?.getAttribute('aria-label') || '',
+            ratingText: ratingSpan?.textContent?.trim() || '',
+            reviewText: reviewSpan?.textContent?.trim() || '',
           };
         })
-      );
-      log.info(`Snapshotted ${listings.length} listings — beginning detail extraction`);
+      ).catch(() => []);
 
-      // Enrich each plain listing with parsed coords + rating/review
-      const enriched = listings.map((l) => {
+      // Dedup by href (same business could appear twice in feed)
+      const seenHrefs = new Set();
+      const listings = [];
+      for (const l of rawListings) {
+        if (!l.href || l.isSponsored) continue;
+        const hrefKey = l.href.split('?')[0];
+        if (seenHrefs.has(hrefKey)) continue;
+        seenHrefs.add(hrefKey);
+        // Enrich with parsed coords and rating
         const coords = extractCoordsFromUrl(l.href);
-        let rating = null, reviewCount = null;
-        const fromAria = parseRatingAria(l.ratingAria);
-        if (fromAria.rating != null) rating = fromAria.rating;
-        if (fromAria.reviewCount != null) reviewCount = fromAria.reviewCount;
+        const ariaParsed = parseRatingAria(l.ratingAria);
+        let rating = ariaParsed.rating;
+        let reviewCount = ariaParsed.reviewCount;
         if (rating == null && l.ratingText) {
           const r = parseFloat(l.ratingText.replace(',', '.'));
           if (!Number.isNaN(r) && r >= 0 && r <= 5) rating = r;
         }
         if (reviewCount == null && l.reviewText) {
           const m = l.reviewText.match(/\(([\d\s,]+)\)/);
-          if (m) {
-            const n = parseInt(m[1].replace(/[\s,]/g, ''), 10);
-            if (!Number.isNaN(n) && n >= 0) reviewCount = n;
-          }
+          if (m) { const n = parseInt(m[1].replace(/[\s,]/g, ''), 10); if (!Number.isNaN(n) && n >= 0) reviewCount = n; }
         }
-        return { ...l, coords, rating, reviewCount, hrefKey: (l.href || '').split('?')[0] };
-      });
+        listings.push({ ...l, hrefKey, coords, rating, reviewCount });
+      }
+      log.info(`  Snapshot: ${listings.length} unique non-sponsored listings to process`);
 
-      // ---- Phase C: visit each listing via DIRECT navigation (no goBack, no stale handles) ----
-      const seenHrefs = new Set();
-      let extractedCount = 0;
+      // ---- Phase C: visit each listing via direct navigation ----
+      let searchExtractedCount = 0;
       let skippedDuplicates = 0;
-      let skippedSponsored = 0;
-      let failedCount = 0;
-
-      for (let i = 0; i < enriched.length; i++) {
+      for (let i = 0; i < listings.length; i++) {
         if (isSample && sampleTargetTotal > 0 && allRecords.length >= sampleTargetTotal) break;
         await checkPause();
-        const listing = enriched[i];
-        if (!listing.href || !listing.hrefKey) continue;
-        if (seenHrefs.has(listing.hrefKey)) continue;
-        seenHrefs.add(listing.hrefKey);
-        if (listing.isSponsored) { skippedSponsored++; continue; }
+        const listing = listings[i];
 
-        // Pre-skip if we've already saved this business in a prior run
+        // Skip duplicates BEFORE navigating (saves the whole page load time)
         if (typeof isDuplicate === 'function' && listing.name && listing.coords?.latitude != null) {
           if (isDuplicate(listing.name, listing.coords.latitude, listing.coords.longitude)) {
-            log.debug(`  Skipping already-scraped: ${listing.name}`);
             skippedDuplicates++;
             continue;
           }
         }
 
         try {
-          await page.goto(listing.href, { waitUntil: 'domcontentloaded', timeout: 60000 });
-          await randomDelay(800, 1500);
+          await page.goto(listing.href, { waitUntil: 'domcontentloaded', timeout: 30000 });
           const record = await extractBusinessDetailsFromPage(page, listing, categoryName, cc, location);
           if (record && record.businessName) {
             const dedupKey = `${record.businessName.toLowerCase()}|${(record.city || '').toLowerCase()}`;
             if (!seenNames.has(dedupKey)) {
               seenNames.add(dedupKey);
               allRecords.push(record);
-              extractedCount++;
+              searchExtractedCount++;
               if (typeof onRecord === 'function') onRecord(record);
               log.info(`  [${allRecords.length}] ${record.businessName} - ${record.city}`);
             }
           }
           await randomDelay(minDelay, maxDelay);
-        } catch (err) {
-          failedCount++;
-          log.error(`  Failed listing ${i + 1}/${enriched.length} (${listing.name}): ${err.message}`);
-          // Keep going — don't bubble up. Next page.goto will replace the broken state.
+        } catch (error) {
+          // Never let a single listing failure kill the whole search
+          log.error(`  Skipping "${listing.name}" — ${error.message}`);
         }
       }
 
-      log.info(`Finished "${keyword}" in ${location}: extracted=${extractedCount}, dupSkipped=${skippedDuplicates}, sponsoredSkipped=${skippedSponsored}, failed=${failedCount}, total seen=${seenHrefs.size}`);
+      log.info(`Finished "${keyword}" in ${location}: ${searchExtractedCount} new, ${skippedDuplicates} dupes skipped, ${listings.length} total`);
     },
     failedRequestHandler: async ({ request, log }) => {
-      log.error(`Request failed (no retries): ${request.url}`);
+      log.error(`Request failed: ${request.url}`);
     },
   });
 

@@ -4,6 +4,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
 import logger from '../utils/logger.js';
 
 /** One record in the JSON export shape. Also used for NDJSON streaming. */
@@ -22,24 +23,28 @@ export function recordToExportShape(record) {
   };
 }
 
-/** Write final .json (metadata + data array) from an NDJSON file. Call after streaming is done. */
-export function finishJsonFromNdjson(ndjsonPath, jsonPath, totalRecords) {
+/** Write final .json (metadata + data array) from an NDJSON file. Streams line-by-line. */
+export async function finishJsonFromNdjson(ndjsonPath, jsonPath, totalRecords) {
   if (!fs.existsSync(ndjsonPath)) { logger.warn('[JSON] NDJSON file missing'); return ''; }
-  const lines = fs.readFileSync(ndjsonPath, 'utf-8').split('\n').filter((l) => l.trim());
-  const data = lines.map((l) => {
-    try { return JSON.parse(l); } catch (e) { return null; }
-  }).filter(Boolean);
-  const output = {
-    metadata: {
-      exportDate: new Date().toISOString(),
-      totalRecords: data.length,
-      encoding: 'UTF-8',
-      ...(totalRecords != null ? { statistics: { totalRecords } } : {}),
-    },
-    data,
-  };
-  fs.writeFileSync(jsonPath, JSON.stringify(output, null, 2), 'utf-8');
-  logger.info(`[JSON] Wrote ${jsonPath} (${data.length} records from NDJSON)`);
+  const out = fs.createWriteStream(jsonPath, 'utf-8');
+  const metadata = { exportDate: new Date().toISOString(), encoding: 'UTF-8' };
+  if (totalRecords != null) metadata.statistics = { totalRecords };
+  const metadataPretty = JSON.stringify(metadata, null, 4).replace(/\n/g, '\n  ');
+  out.write(`{\n  "metadata": ${metadataPretty},\n  "data": [\n`);
+  const rl = readline.createInterface({ input: fs.createReadStream(ndjsonPath, 'utf-8'), crlfDelay: Infinity });
+  let count = 0;
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    try {
+      const record = JSON.parse(line);
+      if (count > 0) out.write(',\n');
+      out.write(`    ${JSON.stringify(record)}`);
+      count++;
+    } catch (e) {}
+  }
+  out.write(`\n  ],\n  "totalRecords": ${count}\n}\n`);
+  await new Promise((resolve, reject) => out.end((err) => err ? reject(err) : resolve()));
+  logger.info(`[JSON] Wrote ${jsonPath} (${count} records from NDJSON)`);
   return jsonPath;
 }
 

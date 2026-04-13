@@ -11,7 +11,8 @@
     "gyms": "node src/main.js --country=PK --category=\"Gyms & Fitness\" --no-headless",
     "gyms:lahore": "node src/main.js --country=PK --category=\"Gyms & Fitness\" --city=Lahore --no-headless",
     "gyms:karachi": "node src/main.js --country=PK --category=\"Gyms & Fitness\" --city=Karachi --no-headless",
-    "gyms:islamabad": "node src/main.js --country=PK --category=\"Gyms & Fitness\" --city=Islamabad --no-headless"
+    "gyms:islamabad": "node src/main.js --country=PK --category=\"Gyms & Fitness\" --city=Islamabad --no-headless",
+    "test:lahore-gyms": "node scripts/testLahoreGyms.js"
   },
   "keywords": [
     "google-maps",
