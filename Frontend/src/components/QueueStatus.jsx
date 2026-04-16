@@ -8,12 +8,9 @@ export function QueueStatus() {
 
   useEffect(() => {
     const poll = () => {
-      getQueueStatus()
-        .then((data) => setQueue(data))
-        .catch(() => {});
+      getQueueStatus().then((data) => setQueue(data)).catch(() => {});
       pollRef.current = setTimeout(poll, 3000);
     };
-
     poll();
     return () => clearTimeout(pollRef.current);
   }, []);
@@ -22,14 +19,24 @@ export function QueueStatus() {
 
   return (
     <div className="w-full animate-fade-in">
-      <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4">
-        <div className="flex items-center gap-2 text-sm font-medium text-slate-200 mb-3">
-          <ListOrdered className="w-4 h-4" />
+      <div
+        className="rounded-[10px] p-4"
+        style={{
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border-subtle)',
+          boxShadow: 'var(--shadow-sm)',
+        }}
+      >
+        <div className="flex items-center gap-2 text-sm font-medium mb-3" style={{ color: 'var(--text-primary)' }}>
+          <ListOrdered className="w-4 h-4" style={{ color: 'var(--accent)' }} />
           <span>Queue Status</span>
         </div>
 
         {queue.currentJobId && queue.currentConfig && (
-          <div className="flex items-center gap-2 text-sm text-sky-300 mb-2">
+          <div
+            className="flex items-center gap-2 text-sm mb-2 px-2.5 py-1.5 rounded-md"
+            style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}
+          >
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             <span>
               Running: {queue.currentConfig.country}
@@ -40,23 +47,26 @@ export function QueueStatus() {
         )}
 
         {queue.pendingCount > 0 && (
-          <div className="text-sm text-slate-400">
-            <span className="text-slate-300">{queue.pendingCount}</span> job{queue.pendingCount !== 1 ? 's' : ''} pending:
+          <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{queue.pendingCount}</span>
+            {' '}job{queue.pendingCount !== 1 ? 's' : ''} pending:
             <ul className="mt-1 ml-4 space-y-0.5">
               {queue.pending.slice(0, 5).map((p, i) => (
-                <li key={i} className="text-xs text-slate-500">
+                <li key={i} className="text-xs" style={{ color: 'var(--text-muted)' }}>
                   {p.country}{p.city !== 'all' ? ` / ${p.city}` : ''}{p.category !== 'all' ? ` / ${p.category}` : ''}
                 </li>
               ))}
               {queue.pending.length > 5 && (
-                <li className="text-xs text-slate-600">...and {queue.pending.length - 5} more</li>
+                <li className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  ...and {queue.pending.length - 5} more
+                </li>
               )}
             </ul>
           </div>
         )}
 
         {queue.pendingCount === 0 && !queue.isRunning && (
-          <div className="text-sm text-emerald-400">Queue complete.</div>
+          <div className="text-sm" style={{ color: 'var(--success)' }}>Queue complete.</div>
         )}
       </div>
     </div>

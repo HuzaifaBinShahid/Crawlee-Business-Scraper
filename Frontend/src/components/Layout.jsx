@@ -3,9 +3,12 @@ import { Sidebar } from './Sidebar';
 
 export function Layout({ activeTab, onTabChange, children }) {
   return (
-    <div className="flex min-h-screen bg-slate-950">
+    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg-page)' }}>
       <Sidebar activeTab={activeTab} onTabChange={onTabChange} />
-      <main className="flex-1 p-6 md:p-8 overflow-auto animate-fade-in bg-slate-900">
+      <main
+        className="flex-1 overflow-auto animate-fade-in"
+        style={{ background: 'var(--bg-page)' }}
+      >
         {children}
       </main>
     </div>

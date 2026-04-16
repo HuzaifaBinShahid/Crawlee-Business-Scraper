@@ -86,6 +86,21 @@ const argv = yargs(hideBin(process.argv))
     description: 'Comma-separated list of proxy URLs (e.g. http://user:pass@host:port)',
     default: '',
   })
+  .option('nav-timeout', {
+    type: 'number',
+    description: 'Navigation timeout in seconds',
+    default: 90,
+  })
+  .option('max-retries', {
+    type: 'number',
+    description: 'Max retries per failed request',
+    default: 0,
+  })
+  .option('retry-file', {
+    type: 'string',
+    description: 'Path to JSON file with failed URLs to retry',
+    default: '',
+  })
   .help()
   .alias('help', 'h')
   .parse();

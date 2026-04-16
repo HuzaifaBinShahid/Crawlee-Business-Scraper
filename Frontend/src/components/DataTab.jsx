@@ -1,46 +1,28 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { getData, getCategories } from '../api/client';
+import { Search, RefreshCw, Download, ArrowUp, ArrowDown } from 'lucide-react';
+import { getData, getCategories, downloadUrl } from '../api/client';
 import { DataTable } from './DataTable';
-import { FilterBar } from './FilterBar';
 import { Pagination } from './Pagination';
+import { Button } from './Button';
+import { Select } from './Select';
+import { CountrySelect } from './CountrySelect';
+import { CategorySelect } from './CategorySelect';
+import { TextInput } from './TextInput';
+import { Flag } from './Flag';
+
+const COUNTRY_NAME = { UK: 'United Kingdom', FR: 'France', PK: 'Pakistan', SA: 'Saudi Arabia' };
+import { Card } from './Card';
+import { SectionHeading } from './SectionHeading';
 
 const PAGE_SIZE = 25;
 
-const COLUMNS = [
-  { key: 'uniqueId', label: 'ID' },
-  { key: 'businessName', label: 'Name' },
-  { key: 'businessType', label: 'Type', render: (v) => v || '—' },
-  { key: 'category', label: 'Category' },
-  {
-    key: 'address',
-    label: 'Address',
-    render: (_, row) => {
-      const a = row.address || {};
-      const parts = [a.street, a.city, a.zipCode, a.state].filter(Boolean);
-      return parts.length ? parts.join(', ') : '—';
-    },
-  },
-  { key: 'country', label: 'Country', render: (_, row) => (row.address && row.address.country) || '—' },
-  { key: 'phone', label: 'Phone', render: (_, row) => (row.contact && row.contact.phone) || '—' },
-  {
-    key: 'website',
-    label: 'Website',
-    render: (_, row) => {
-      const url = row.contact && row.contact.website;
-      if (!url) return '—';
-      return (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2 transition-colors"
-        >
-          {url.length > 40 ? url.slice(0, 40) + '…' : url}
-        </a>
-      );
-    },
-  },
+const FILTER_CHIPS = [
+  { key: 'all', label: 'All' },
+  { key: 'duplicates', label: 'Duplicates' },
+  { key: 'incomplete', label: 'Incomplete' },
 ];
+
+const DOWNLOAD_FORMATS = ['csv', 'json', 'ndjson'];
 
 export function DataTab() {
   const [data, setData] = useState([]);
@@ -49,87 +31,244 @@ export function DataTab() {
   const [error, setError] = useState(null);
   const [countryFilter, setCountryFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [filterType, setFilterType] = useState('all');
+  const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState('name');
+  const [sortDir, setSortDir] = useState('asc');
   const [page, setPage] = useState(0);
 
   const fetchData = () => {
     setLoading(true);
     setError(null);
-    Promise.all([getData(), getCategories()])
+    const opts = {};
+    if (countryFilter) opts.country = countryFilter;
+    if (filterType && filterType !== 'all') opts.filter = filterType;
+    if (search) opts.search = search;
+    Promise.all([getData(opts), getCategories()])
       .then(([dataRes, catRes]) => {
         setData(Array.isArray(dataRes.data) ? dataRes.data : []);
         setCategories(Array.isArray(catRes) ? catRes : []);
       })
-      .catch((err) => {
-        setError(err.message || 'Failed to load data');
-        setData([]);
-      })
+      .catch((err) => { setError(err.message || 'Failed to load data'); setData([]); })
       .finally(() => setLoading(false));
   };
 
+  useEffect(() => { fetchData(); }, [countryFilter, filterType]);
+
   useEffect(() => {
-    fetchData();
-  }, []);
+    const timer = setTimeout(fetchData, 400);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortDir('asc'); }
+  };
 
   const filteredRows = useMemo(() => {
     let list = data;
-    if (countryFilter) {
-      list = list.filter((row) => (row.address && row.address.country) === countryFilter);
-    }
     if (categoryFilter) {
-      list = list.filter((row) => row.category === categoryFilter);
+      const want = categoryFilter.toLowerCase();
+      // Match across both schemas: nationwide client uses `category_raw`, GroceryStore uses `category`
+      list = list.filter((r) => {
+        const cat = (r.category_raw || r.category || '').toLowerCase();
+        return cat === want;
+      });
     }
+    list = [...list].sort((a, b) => {
+      const av = a[sortKey] ?? '';
+      const bv = b[sortKey] ?? '';
+      if (typeof av === 'number' && typeof bv === 'number') return sortDir === 'asc' ? av - bv : bv - av;
+      return sortDir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+    });
     return list;
-  }, [data, countryFilter, categoryFilter]);
+  }, [data, categoryFilter, sortKey, sortDir]);
 
   const pageCount = Math.ceil(filteredRows.length / PAGE_SIZE) || 1;
-  const paginatedRows = useMemo(() => {
-    const start = page * PAGE_SIZE;
-    return filteredRows.slice(start, start + PAGE_SIZE);
-  }, [filteredRows, page]);
+  const paginatedRows = useMemo(() => filteredRows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE), [filteredRows, page]);
+  useEffect(() => { if (page >= pageCount && page > 0) setPage(pageCount - 1); }, [pageCount, page]);
 
-  useEffect(() => {
-    if (page >= pageCount && page > 0) setPage(pageCount - 1);
-  }, [pageCount, page]);
-
-  const countryFromAddress = (row) => (row.address && row.address.country) || '';
-  const rowsWithCountry = useMemo(
-    () => paginatedRows.map((r) => ({ ...r, country: countryFromAddress(r) })),
-    [paginatedRows],
+  const SortHeader = ({ k, label }) => (
+    <button
+      onClick={() => toggleSort(k)}
+      className="inline-flex items-center gap-1 hover:[color:var(--accent)] transition-colors"
+      style={{ color: sortKey === k ? 'var(--accent)' : 'var(--text-muted)' }}
+      data-testid={`sort-${k}`}
+    >
+      {label}
+      {sortKey === k && (sortDir === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)}
+    </button>
   );
 
+  const formatAddress = (v, row) => {
+    if (!v) {
+      const parts = [row.street, row.city, row.zipCode, row.state, row.country_code || row.country].filter(Boolean);
+      return parts.length ? parts.join(', ') : '—';
+    }
+    if (typeof v === 'string') return v;
+    if (typeof v === 'object') {
+      const parts = [v.street, v.city, v.zipCode, v.state, v.country].filter(Boolean);
+      return parts.length ? parts.join(', ') : '—';
+    }
+    return String(v);
+  };
+  const safe = (v) => (v == null || v === '') ? '—' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+
+  const COLUMNS = [
+    { key: 'external_id', label: <SortHeader k="external_id" label="ID" />, render: (v, row) => v || row.uniqueId || '—' },
+    { key: 'name', label: <SortHeader k="name" label="Name" />, render: (_, row) => row.name || row.businessName || '—' },
+    { key: 'category_raw', label: <SortHeader k="category_raw" label="Category" />, render: (v, row) => safe(v || row.category) },
+    { key: 'city', label: <SortHeader k="city" label="City" />, render: (v, row) => safe(v || row.address?.city) },
+    {
+      key: 'country_code',
+      label: <SortHeader k="country_code" label="Country" />,
+      render: (v, row) => {
+        const code = String(v || row.address?.country || row.country || '').toUpperCase();
+        if (!code) return '—';
+        return (
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+            <Flag code={code} size={18} />
+            <span>{COUNTRY_NAME[code] || code}</span>
+          </span>
+        );
+      },
+    },
+    { key: 'phone', label: 'Phone', render: (v, row) => safe(v || row.contact?.phone) },
+    { key: 'address', label: 'Address', render: formatAddress },
+    {
+      key: 'website', label: 'Website',
+      render: (_, row) => {
+        const url = row.website || row.contact?.website;
+        if (!url) return '—';
+        return (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: 'var(--accent)' }}
+            className="underline underline-offset-2 hover:opacity-80"
+          >
+            {url.length > 30 ? url.slice(0, 30) + '…' : url}
+          </a>
+        );
+      },
+    },
+    { key: 'rating', label: <SortHeader k="rating" label="Rating" />, render: (v) => v ?? '—' },
+    { key: 'review_count', label: <SortHeader k="review_count" label="Reviews" />, render: (v, row) => v ?? row.reviewCount ?? '—' },
+  ];
+
   return (
-    <div className="animate-fade-in-up">
-      <h1 className="text-xl font-semibold text-stone-100 mb-6">Data</h1>
-      <FilterBar
-        countryFilter={countryFilter}
-        onCountryFilterChange={(v) => {
-          setCountryFilter(v);
-          setPage(0);
-        }}
-        categoryFilter={categoryFilter}
-        onCategoryFilterChange={(v) => {
-          setCategoryFilter(v);
-          setPage(0);
-        }}
-        categoryOptions={categories}
-        onRefresh={fetchData}
-        loading={loading}
+    <div className="py-8 px-6 md:px-8 animate-fade-in">
+      <SectionHeading
+        eyebrow="Dataset · Records"
+        title="Data"
+        subtitle={`${filteredRows.length.toLocaleString()} record${filteredRows.length === 1 ? '' : 's'} matching current filters`}
+        right={
+          <Button variant="secondary" onClick={fetchData}>
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        }
       />
+
+      {/* Filter chips */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {FILTER_CHIPS.map((chip) => {
+          const active = filterType === chip.key;
+          return (
+            <button
+              key={chip.key}
+              onClick={() => { setFilterType(chip.key); setPage(0); }}
+              data-testid={`filter-${chip.key}`}
+              style={{
+                background: active ? 'var(--accent-soft)' : 'var(--bg-surface)',
+                color: active ? 'var(--accent)' : 'var(--text-secondary)',
+                border: `1px solid ${active ? 'var(--accent-border)' : 'var(--border-subtle)'}`,
+              }}
+              className="px-3 py-1 rounded-full text-xs font-medium transition-all duration-150 active:scale-95 hover:[background:var(--bg-subtle)]"
+            >
+              {chip.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Controls row */}
+      <div className="flex flex-wrap items-end gap-3 mb-4">
+        <div className="flex-1 min-w-56">
+          <TextInput
+            value={search}
+            onChange={(v) => { setSearch(v); setPage(0); }}
+            placeholder="Search name, phone, city, address..."
+            leftIcon={<Search className="w-4 h-4" />}
+            data-testid="data-search"
+          />
+        </div>
+        <div className="w-48">
+          <CountrySelect
+            value={countryFilter}
+            includeAll
+            onChange={(v) => { setCountryFilter(v); setPage(0); }}
+            data-testid="country-filter"
+          />
+        </div>
+        <div className="w-56">
+          <CategorySelect
+            value={categoryFilter || 'all'}
+            onChange={(v) => { setCategoryFilter(v === 'all' ? '' : v); setPage(0); }}
+            options={categories}
+            includeAll
+            data-testid="category-filter"
+          />
+        </div>
+      </div>
+
+      {/* Downloads */}
+      {countryFilter && (
+        <div className="mb-4 flex items-center gap-2 text-sm">
+          <span style={{ color: 'var(--text-secondary)' }}>Download {countryFilter}:</span>
+          {DOWNLOAD_FORMATS.map((fmt) => (
+            <a
+              key={fmt}
+              href={downloadUrl(countryFilter, fmt)}
+              data-testid={`download-${fmt}`}
+              style={{
+                background: 'var(--bg-surface)',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border-subtle)',
+              }}
+              className="inline-flex items-center gap-1 px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 hover:[background:var(--accent-soft)] hover:[color:var(--accent)] hover:[border-color:var(--accent-border)]"
+            >
+              <Download className="w-3 h-3" />
+              {fmt.toUpperCase()}
+            </a>
+          ))}
+        </div>
+      )}
+
       {error && (
-        <div className="mb-4 flex items-center gap-2 px-4 py-3 rounded-lg bg-red-900/50 text-red-200 border border-red-700">
+        <div
+          className="mb-4 px-4 py-3 rounded-md text-sm"
+          style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}
+        >
           {error}
         </div>
       )}
-      <div className="bg-slate-800 rounded-xl border border-slate-600 shadow-card p-6 hover:shadow-card-hover transition-shadow duration-300">
-        {loading ? (
-          <p className="text-slate-400 text-sm py-4">Loading…</p>
-        ) : (
-          <>
-            <DataTable columns={COLUMNS} rows={rowsWithCountry} />
-            <Pagination pageCount={pageCount} currentPage={page} onPageChange={setPage} />
-          </>
-        )}
-      </div>
+
+      <Card padded={false}>
+        <div className="p-4">
+          {loading ? (
+            <p className="text-sm py-4" style={{ color: 'var(--text-muted)' }}>Loading...</p>
+          ) : filteredRows.length === 0 ? (
+            <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>No records match your filters.</p>
+          ) : (
+            <>
+              <DataTable columns={COLUMNS} rows={paginatedRows} />
+              <Pagination pageCount={pageCount} currentPage={page} onPageChange={setPage} />
+            </>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }

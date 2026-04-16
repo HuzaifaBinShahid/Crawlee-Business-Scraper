@@ -3,6 +3,8 @@ import { Layout } from './components/Layout';
 import { RunScraperTab } from './components/RunScraperTab';
 import { DataTab } from './components/DataTab';
 import { StatsTab } from './components/StatsTab';
+import { HistoryTab } from './components/HistoryTab';
+import { SettingsTab } from './components/SettingsTab';
 import { getRunStatus } from './api/client';
 
 const POLL_INTERVAL_MS = 2000;
@@ -75,6 +77,8 @@ function App() {
       )}
       {activeTab === 'data' && <DataTab />}
       {activeTab === 'stats' && <StatsTab />}
+      {activeTab === 'history' && <HistoryTab />}
+      {activeTab === 'settings' && <SettingsTab />}
     </Layout>
   );
 }

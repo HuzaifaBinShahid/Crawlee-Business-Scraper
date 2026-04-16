@@ -1,25 +1,45 @@
 import React from 'react';
+import { Check } from 'lucide-react';
 
-export function Checkbox({ label, checked, onChange, id }) {
-  const inputId = id || `cb-${label?.replace(/\s/g, '-') || Math.random().toString(36).slice(2)}`;
+export function Checkbox({ label, checked, onChange, id, disabled = false, ...rest }) {
+  const cbId = id || `cb-${label?.replace(/\s/g, '-') || Math.random().toString(36).slice(2)}`;
   return (
-    <div className="flex items-center gap-3 mb-4">
-      <input
-        type="checkbox"
-        id={inputId}
-        checked={!!checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="
-          w-5 h-5 rounded border-slate-500 bg-slate-800 text-slate-500
-          focus:ring-2 focus:ring-slate-500/40 focus:ring-offset-0 focus:ring-offset-slate-900
-          transition-all duration-200 accent-cyan-500
-        "
-      />
+    <label
+      htmlFor={cbId}
+      className={`inline-flex items-center gap-2.5 select-none ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+    >
+      <span className="relative inline-flex items-center justify-center">
+        <input
+          id={cbId}
+          type="checkbox"
+          checked={!!checked}
+          onChange={(e) => onChange?.(e.target.checked)}
+          disabled={disabled}
+          {...rest}
+          className="peer sr-only"
+        />
+        <span
+          style={{
+            background: checked ? 'var(--accent)' : 'var(--bg-surface)',
+            border: `1.5px solid ${checked ? 'var(--accent)' : 'var(--border-strong)'}`,
+          }}
+          className={`
+            pointer-events-none
+            block w-[18px] h-[18px] rounded-[5px]
+            transition-all duration-150 ease-out
+            ${checked ? 'animate-tick-bounce' : ''}
+          `}
+        />
+        {checked && (
+          <Check
+            className="absolute w-[12px] h-[12px] text-white pointer-events-none animate-fade-in"
+            strokeWidth={3}
+          />
+        )}
+      </span>
       {label && (
-        <label htmlFor={inputId} className="text-sm text-slate-300 cursor-pointer select-none">
-          {label}
-        </label>
+        <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{label}</span>
       )}
-    </div>
+    </label>
   );
 }

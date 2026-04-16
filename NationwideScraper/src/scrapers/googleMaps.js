@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import logger from '../utils/logger.js';
 import { randomDelay } from '../utils/rateLimiter.js';
 import { checkPause } from '../utils/pauseCheck.js';
+import { emitProgress } from '../utils/progress.js';
 import { normalizeRecord } from '../processors/normalizer.js';
 import { getSearchUrl } from '../config/sources.js';
 
@@ -473,6 +474,7 @@ export async function scrapeGoogleMaps({
     requestHandler: async ({ page, request, log }) => {
       const { keyword, location, categoryName, country: cc } = request.userData;
       log.info(`Processing: "${keyword}" in ${location} (${cc})`);
+      emitProgress('task_start', { country: cc, city: location, category: categoryName, keyword });
 
       if (isSample && sampleTargetTotal > 0 && allRecords.length >= sampleTargetTotal) {
         log.info('Sample target reached, skipping this request.');
@@ -551,13 +553,18 @@ export async function scrapeGoogleMaps({
         if (!listing.href || !listing.hrefKey) continue;
         if (seenHrefs.has(listing.hrefKey)) continue;
         seenHrefs.add(listing.hrefKey);
-        if (listing.isSponsored) { skippedSponsored++; continue; }
+        if (listing.isSponsored) {
+          skippedSponsored++;
+          emitProgress('record_skipped', { reason: 'sponsored', name: listing.name });
+          continue;
+        }
 
         // Pre-skip if we've already saved this business in a prior run
         if (typeof isDuplicate === 'function' && listing.name && listing.coords?.latitude != null) {
           if (isDuplicate(listing.name, listing.coords.latitude, listing.coords.longitude)) {
             log.debug(`  Skipping already-scraped: ${listing.name}`);
             skippedDuplicates++;
+            emitProgress('record_duplicate', { name: listing.name });
             continue;
           }
         }
@@ -573,6 +580,7 @@ export async function scrapeGoogleMaps({
               allRecords.push(record);
               extractedCount++;
               if (typeof onRecord === 'function') onRecord(record);
+              emitProgress('record_saved', { name: record.businessName, city: record.city, category: categoryName, country: cc });
               log.info(`  [${allRecords.length}] ${record.businessName} - ${record.city}`);
             }
           }
@@ -580,11 +588,13 @@ export async function scrapeGoogleMaps({
         } catch (err) {
           failedCount++;
           log.error(`  Failed listing ${i + 1}/${enriched.length} (${listing.name}): ${err.message}`);
+          emitProgress('record_failed', { name: listing.name, url: listing.href, error: err.message });
           // Keep going — don't bubble up. Next page.goto will replace the broken state.
         }
       }
 
       log.info(`Finished "${keyword}" in ${location}: extracted=${extractedCount}, dupSkipped=${skippedDuplicates}, sponsoredSkipped=${skippedSponsored}, failed=${failedCount}, total seen=${seenHrefs.size}`);
+      emitProgress('task_end', { country: cc, city: location, category: categoryName, extracted: extractedCount, duplicates: skippedDuplicates, failed: failedCount });
     },
     failedRequestHandler: async ({ request, log }) => {
       log.error(`Request failed (no retries): ${request.url}`);

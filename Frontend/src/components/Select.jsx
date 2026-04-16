@@ -1,36 +1,52 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 
-export function Select({ label, value, onChange, options, id, placeholder = 'Select...' }) {
+export function Select({ label, value, onChange, options, id, placeholder = 'Select...', disabled = false, ...rest }) {
   const selectId = id || `select-${label?.replace(/\s/g, '-') || Math.random().toString(36).slice(2)}`;
+  const [focused, setFocused] = useState(false);
   return (
-    <div className="mb-4">
+    <div className="mb-1">
       {label && (
-        <label htmlFor={selectId} className="block text-sm font-medium text-slate-300 mb-2">
+        <label
+          htmlFor={selectId}
+          className="block text-xs font-medium mb-1.5"
+          style={{ color: 'var(--text-secondary)' }}
+        >
           {label}
         </label>
       )}
-      <select
-        id={selectId}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="
-          w-full px-4 py-3 text-sm rounded-xl
-          border border-slate-600 bg-slate-800 text-stone-200 font-medium
-          focus:outline-none focus:ring-2 focus:ring-slate-500 focus:border-slate-500
-          transition-all duration-200 hover:border-slate-500
-          appearance-none cursor-pointer
-        "
-        style={{
-          background: `#1e293b url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E") no-repeat right 0.75rem center/1.25rem`,
-        }}
-      >
-        {placeholder && <option value="">{placeholder}</option>}
-        {options.map((opt) => (
-          <option key={typeof opt === 'object' ? opt.value : opt} value={typeof opt === 'object' ? opt.value : opt}>
-            {typeof opt === 'object' ? opt.label : opt}
-          </option>
-        ))}
-      </select>
+      <div className="relative">
+        <select
+          id={selectId}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          disabled={disabled}
+          {...rest}
+          style={{
+            background: 'var(--bg-surface)',
+            border: `1px solid ${focused ? 'var(--accent)' : 'var(--border-subtle)'}`,
+            color: 'var(--text-primary)',
+            boxShadow: focused ? '0 0 0 3px var(--accent-soft)' : 'none',
+          }}
+          className="w-full appearance-none pl-3 pr-9 py-2 rounded-md text-sm font-medium cursor-pointer transition-all duration-150 ease-out focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {placeholder && <option value="">{placeholder}</option>}
+          {options.map((opt) => (
+            <option
+              key={typeof opt === 'object' ? opt.value : opt}
+              value={typeof opt === 'object' ? opt.value : opt}
+            >
+              {typeof opt === 'object' ? opt.label : opt}
+            </option>
+          ))}
+        </select>
+        <ChevronDown
+          className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
+          style={{ color: 'var(--text-muted)' }}
+        />
+      </div>
     </div>
   );
 }
