@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, RefreshCw, Download, ArrowUp, ArrowDown } from 'lucide-react';
-import { getData, getCategories, downloadUrl } from '../api/client';
+import { Search, RefreshCw, Download, ArrowUp, ArrowDown, RotateCcw, ExternalLink } from 'lucide-react';
+import { getData, getCategories, downloadUrl, getAllFailed, retryJob } from '../api/client';
 import { DataTable } from './DataTable';
 import { Pagination } from './Pagination';
 import { Button } from './Button';
@@ -20,12 +20,14 @@ const FILTER_CHIPS = [
   { key: 'all', label: 'All' },
   { key: 'duplicates', label: 'Duplicates' },
   { key: 'incomplete', label: 'Incomplete' },
+  { key: 'failed', label: 'Failed' },
 ];
 
 const DOWNLOAD_FORMATS = ['csv', 'json', 'ndjson'];
 
 export function DataTab() {
   const [data, setData] = useState([]);
+  const [failedRecords, setFailedRecords] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -36,10 +38,24 @@ export function DataTab() {
   const [sortKey, setSortKey] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
   const [page, setPage] = useState(0);
+  const [retryMsg, setRetryMsg] = useState(null);
+
+  const viewingFailed = filterType === 'failed';
 
   const fetchData = () => {
     setLoading(true);
     setError(null);
+    if (viewingFailed) {
+      // Dedicated failed-records endpoint — different shape from regular data
+      Promise.all([getAllFailed(), getCategories()])
+        .then(([failedRes, catRes]) => {
+          setFailedRecords(Array.isArray(failedRes) ? failedRes : []);
+          setCategories(Array.isArray(catRes) ? catRes : []);
+        })
+        .catch((err) => { setError(err.message || 'Failed to load failed records'); setFailedRecords([]); })
+        .finally(() => setLoading(false));
+      return;
+    }
     const opts = {};
     if (countryFilter) opts.country = countryFilter;
     if (filterType && filterType !== 'all') opts.filter = filterType;
@@ -56,9 +72,17 @@ export function DataTab() {
   useEffect(() => { fetchData(); }, [countryFilter, filterType]);
 
   useEffect(() => {
+    if (viewingFailed) return; // search is disabled in failed view
     const timer = setTimeout(fetchData, 400);
     return () => clearTimeout(timer);
   }, [search]);
+
+  const handleRetryJob = (jobId) => {
+    setRetryMsg(null);
+    retryJob(jobId)
+      .then(({ jobId: newId }) => setRetryMsg(`Retry started as job #${newId}`))
+      .catch((err) => setRetryMsg(`Retry failed: ${err.message}`));
+  };
 
   const toggleSort = (key) => {
     if (sortKey === key) setSortDir((d) => d === 'asc' ? 'desc' : 'asc');
@@ -255,20 +279,139 @@ export function DataTab() {
         </div>
       )}
 
-      <Card padded={false}>
-        <div className="p-4">
-          {loading ? (
-            <p className="text-sm py-4" style={{ color: 'var(--text-muted)' }}>Loading...</p>
-          ) : filteredRows.length === 0 ? (
-            <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>No records match your filters.</p>
-          ) : (
-            <>
-              <DataTable columns={COLUMNS} rows={paginatedRows} />
-              <Pagination pageCount={pageCount} currentPage={page} onPageChange={setPage} />
-            </>
-          )}
+      {retryMsg && (
+        <div
+          className="mb-4 px-3 py-2 rounded-md text-sm"
+          style={{ background: 'var(--info-soft)', color: 'var(--info)' }}
+        >
+          {retryMsg}
         </div>
-      </Card>
+      )}
+
+      {viewingFailed ? (
+        <FailedRecordsTable
+          loading={loading}
+          rows={failedRecords}
+          onRetryJob={handleRetryJob}
+        />
+      ) : (
+        <Card padded={false}>
+          <div className="p-4">
+            {loading ? (
+              <p className="text-sm py-4" style={{ color: 'var(--text-muted)' }}>Loading...</p>
+            ) : filteredRows.length === 0 ? (
+              <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>No records match your filters.</p>
+            ) : (
+              <>
+                <DataTable columns={COLUMNS} rows={paginatedRows} />
+                <Pagination pageCount={pageCount} currentPage={page} onPageChange={setPage} />
+              </>
+            )}
+          </div>
+        </Card>
+      )}
     </div>
+  );
+}
+
+function FailedRecordsTable({ loading, rows, onRetryJob }) {
+  if (loading) {
+    return (
+      <Card>
+        <p className="text-sm py-4" style={{ color: 'var(--text-muted)' }}>Loading failed records...</p>
+      </Card>
+    );
+  }
+  if (!rows || rows.length === 0) {
+    return (
+      <Card>
+        <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>
+          No failed records yet. Records that error during scraping will appear here.
+        </p>
+      </Card>
+    );
+  }
+
+  // Group by jobId so you can retry each job's failures in one click
+  const byJob = new Map();
+  for (const r of rows) {
+    if (!byJob.has(r.jobId)) byJob.set(r.jobId, []);
+    byJob.get(r.jobId).push(r);
+  }
+
+  return (
+    <Card padded={false} data-testid="failed-records-view">
+      <div
+        className="px-4 py-3 flex items-center justify-between"
+        style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-subtle)' }}
+      >
+        <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+          {rows.length} failed record{rows.length === 1 ? '' : 's'} across {byJob.size} job{byJob.size === 1 ? '' : 's'}
+        </div>
+      </div>
+      <div className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+        {[...byJob.entries()].map(([jobId, list]) => (
+          <div key={jobId} style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            <div
+              className="px-4 py-2.5 flex items-center justify-between gap-3"
+              style={{ background: 'var(--bg-subtle)' }}
+            >
+              <div className="text-xs flex items-center gap-2 flex-wrap">
+                <span
+                  className="px-2 py-0.5 rounded-full font-mono"
+                  style={{ background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}
+                >
+                  Job #{jobId}
+                </span>
+                {list[0].country && <span style={{ color: 'var(--text-muted)' }}>{list[0].country}</span>}
+                {list[0].city && list[0].city !== 'all' && <span style={{ color: 'var(--text-muted)' }}>· {list[0].city}</span>}
+                {list[0].category && list[0].category !== 'all' && <span style={{ color: 'var(--text-muted)' }}>· {list[0].category}</span>}
+                <span style={{ color: 'var(--text-muted)' }}>· {list.length} failure{list.length === 1 ? '' : 's'}</span>
+              </div>
+              <button
+                onClick={() => onRetryJob(jobId)}
+                data-testid="failed-retry-btn"
+                style={{ color: 'var(--warning)' }}
+                className="inline-flex items-center gap-1 text-xs font-medium hover:opacity-80 transition-opacity whitespace-nowrap"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Retry all
+              </button>
+            </div>
+            <ul className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+              {list.map((entry, i) => (
+                <li
+                  key={i}
+                  className="px-4 py-2.5 flex items-start justify-between gap-3 text-sm"
+                  style={{ borderTop: i > 0 ? '1px solid var(--border-subtle)' : 'none', color: 'var(--text-primary)' }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium truncate">{entry.name || '(unnamed)'}</div>
+                    {entry.error && (
+                      <div className="text-xs mt-0.5 truncate" style={{ color: 'var(--danger)' }}>
+                        {entry.error}
+                      </div>
+                    )}
+                  </div>
+                  {entry.url && (
+                    <a
+                      href={entry.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs"
+                      style={{ color: 'var(--accent)' }}
+                      title={entry.url}
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Open
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }

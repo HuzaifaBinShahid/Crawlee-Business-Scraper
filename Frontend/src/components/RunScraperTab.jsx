@@ -72,6 +72,7 @@ export function RunScraperTab({ runState, setRunState }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [navTimeout, setNavTimeout] = useState(90);
   const [maxRetries, setMaxRetries] = useState(0);
+  const [concurrency, setConcurrency] = useState(2);
 
   const [batchMode, setBatchMode] = useState(false);
   const [selectedCities, setSelectedCities] = useState([]);
@@ -116,8 +117,14 @@ export function RunScraperTab({ runState, setRunState }) {
     if (category !== 'all') params.category = category;
     const proxyList = proxies.split('\n').map((s) => s.trim()).filter(Boolean);
     if (proxyList.length) params.proxies = proxyList;
-    if (isNationwide) { if (city !== 'all') params.city = city; }
-    else params.source = source;
+    if (isNationwide) {
+      if (city !== 'all') params.city = city;
+      // Nationwide scraper forces concurrency=1 internally (PK/SA + Google Maps heap issues)
+    } else {
+      params.source = source;
+      // Concurrency is only safe for non-nationwide (UK/FR via GroceryStore)
+      params.concurrency = concurrency;
+    }
     return params;
   };
 
@@ -431,6 +438,17 @@ export function RunScraperTab({ runState, setRunState }) {
                       onChange={setMaxRetries}
                       data-testid="max-retries-input"
                     />
+                    {!isNationwide && (
+                      <NumberInput
+                        label="Concurrency"
+                        hint="parallel browser tabs (UK/FR only)"
+                        min={1}
+                        max={6}
+                        value={concurrency}
+                        onChange={setConcurrency}
+                        data-testid="concurrency-input"
+                      />
+                    )}
                   </div>
                 )}
             </div>

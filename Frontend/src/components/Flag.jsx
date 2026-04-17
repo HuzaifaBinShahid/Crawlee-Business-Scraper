@@ -29,13 +29,15 @@ const FLAG_FR = (
 
 const FLAG_PK = (
   <svg viewBox="0 0 900 600" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-    <rect width="900" height="600" fill="#01411C" />
+    <rect width="900" height="600" fill="#01411c" />
     <rect width="225" height="600" fill="#ffffff" />
-    <circle cx="563" cy="300" r="125" fill="#01411C" />
-    <circle cx="595" cy="272" r="115" fill="#ffffff" />
+    {/* Crescent: paint white disc FIRST, then green cutout on top (offset up-right) */}
+    <circle cx="540" cy="300" r="180" fill="#ffffff" />
+    <circle cx="610" cy="268" r="160" fill="#01411c" />
+    {/* Five-point star in the crescent's opening */}
     <path
       fill="#ffffff"
-      d="M674 344l-29-43-45 23 9-50-44-28 49-9 15-48 27 42 49-7-25 44 43 32-49 10z"
+      d="M720 245 L734 286 L777 287 L743 312 L755 354 L720 329 L685 354 L697 312 L663 287 L706 286 Z"
     />
   </svg>
 );

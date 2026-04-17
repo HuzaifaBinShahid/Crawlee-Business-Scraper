@@ -148,3 +148,11 @@ export async function getFailed(jobId) {
 export async function retryJob(jobId) {
   return handleJson(await fetch(`${API_BASE}/retry/${encodeURIComponent(jobId)}`, { method: 'POST' }));
 }
+
+export async function resumeJob(jobId) {
+  return handleJson(await fetch(`${API_BASE}/resume/${encodeURIComponent(jobId)}`, { method: 'POST' }));
+}
+
+export async function getAllFailed() {
+  return handleJson(await fetch(`${API_BASE}/failed`));
+}

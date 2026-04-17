@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, Trash2, RotateCcw, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { RefreshCw, Trash2, RotateCcw, CheckCircle, XCircle, Clock, Play } from 'lucide-react';
 import { Button } from './Button';
 import { Card } from './Card';
 import { SectionHeading } from './SectionHeading';
 import { Flag } from './Flag';
-import { getHistory, clearHistory, retryJob, getFailed } from '../api/client';
+import { getHistory, clearHistory, retryJob, resumeJob, getFailed } from '../api/client';
 
 const COUNTRY_NAME = { UK: 'United Kingdom', FR: 'France', PK: 'Pakistan', SA: 'Saudi Arabia' };
 
@@ -82,6 +82,13 @@ export function HistoryTab() {
     retryJob(jobId)
       .then(({ jobId: newId }) => setRetryMessage(`Retry started as job #${newId}`))
       .catch((err) => setRetryMessage(`Retry failed: ${err.message}`));
+  };
+
+  const handleResume = (jobId) => {
+    setRetryMessage(null);
+    resumeJob(jobId)
+      .then(({ jobId: newId }) => setRetryMessage(`Resume started as job #${newId}. Already-saved records will be skipped.`))
+      .catch((err) => setRetryMessage(`Resume failed: ${err.message}`));
   };
 
   return (
@@ -178,17 +185,30 @@ export function HistoryTab() {
                     <Td color="var(--text-muted)" size="xs" className="whitespace-nowrap">{formatDate(h.startTime)}</Td>
                     <Td color="var(--text-muted)" size="xs" className="whitespace-nowrap">{formatDuration(h.startTime, h.endTime)}</Td>
                     <Td align="right">
-                      {(h.counters?.failed || 0) > 0 && (failedMap[h.jobId]?.length || 0) > 0 && (
-                        <button
-                          onClick={() => handleRetry(h.jobId)}
-                          data-testid="retry-btn"
-                          style={{ color: 'var(--warning)' }}
-                          className="inline-flex items-center gap-1 text-xs font-medium hover:opacity-80 transition-opacity whitespace-nowrap"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                          Retry {failedMap[h.jobId]?.length || 0}
-                        </button>
-                      )}
+                      <div className="inline-flex items-center gap-3 justify-end whitespace-nowrap">
+                        {(h.status === 'interrupted' || h.status === 'failed') && (
+                          <button
+                            onClick={() => handleResume(h.jobId)}
+                            data-testid="resume-btn"
+                            style={{ color: 'var(--accent)' }}
+                            className="inline-flex items-center gap-1 text-xs font-medium hover:opacity-80 transition-opacity"
+                          >
+                            <Play className="w-3 h-3" />
+                            Resume
+                          </button>
+                        )}
+                        {(h.counters?.failed || 0) > 0 && (failedMap[h.jobId]?.length || 0) > 0 && (
+                          <button
+                            onClick={() => handleRetry(h.jobId)}
+                            data-testid="retry-btn"
+                            style={{ color: 'var(--warning)' }}
+                            className="inline-flex items-center gap-1 text-xs font-medium hover:opacity-80 transition-opacity"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            Retry {failedMap[h.jobId]?.length || 0}
+                          </button>
+                        )}
+                      </div>
                     </Td>
                   </tr>
                 ))}

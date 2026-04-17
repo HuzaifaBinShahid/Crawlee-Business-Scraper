@@ -335,7 +335,7 @@ function parseProgressLine(line, job) {
 // ─── Spawn helper ────────────────────────────────────────────────────────────
 
 function startJob(config) {
-  const { country, category, source = 'all', sample = false, city, minDelay, maxDelay, proxies, navTimeout, maxRetries, retryFile } = config;
+  const { country, category, source = 'all', sample = false, city, minDelay, maxDelay, proxies, navTimeout, maxRetries, retryFile, concurrency } = config;
   const jobId = config.jobId || String(nextJobId++);
   const nationwide = isNationwideCountry(country);
 
@@ -361,6 +361,13 @@ function startJob(config) {
     if (category && category !== 'all' && CATEGORIES.includes(category)) args.push('--category=' + category);
     if (source && ['google', 'yellow', 'all'].includes(source)) args.push('--source=' + source);
     if (sample) args.push('--sample');
+    // Concurrency is only safe for UK/FR (GroceryStore handles multi-tab fine).
+    // Nationwide (PK/SA) forces concurrency=1 inside its scraper due to Playwright
+    // elementHandle issues on Google Maps — exposing a slider there would be misleading.
+    if (concurrency != null) {
+      const n = Math.max(1, Math.min(6, Number(concurrency) || 2));
+      args.push('--concurrency=' + n);
+    }
     // Pass rate-limit / proxy flags (GroceryStore yargs ignores unknown args silently;
     // once it supports these flags they'll start taking effect).
     if (minDelay != null) args.push('--min-delay=' + Math.max(500, Number(minDelay) || 2000));
@@ -689,6 +696,62 @@ app.get('/api/failed/:jobId', (req, res) => {
   const file = path.join(FAILED_DIR, `${req.params.jobId}.json`);
   if (!fs.existsSync(file)) return res.json([]);
   try { res.json(JSON.parse(fs.readFileSync(file, 'utf-8'))); } catch (_) { res.json([]); }
+});
+
+/**
+ * Aggregate every failed record across every job, joined to its source job
+ * for the Data tab's "Failed" filter view.
+ */
+app.get('/api/failed', (req, res) => {
+  try {
+    if (!fs.existsSync(FAILED_DIR)) return res.json([]);
+    const files = fs.readdirSync(FAILED_DIR).filter((f) => f.endsWith('.json'));
+    const history = readHistory();
+    const historyByJob = new Map(history.map((h) => [String(h.jobId), h]));
+    const all = [];
+    for (const f of files) {
+      const jobId = f.replace(/\.json$/, '');
+      let list = [];
+      try { list = JSON.parse(fs.readFileSync(path.join(FAILED_DIR, f), 'utf-8')); } catch (_) { }
+      if (!Array.isArray(list)) continue;
+      const h = historyByJob.get(String(jobId)) || {};
+      for (const entry of list) {
+        all.push({
+          jobId,
+          country: h.country || null,
+          city: h.city || null,
+          category: h.category || null,
+          name: entry.name || '',
+          url: entry.url || '',
+          error: entry.error || '',
+          at: entry.at || null,
+        });
+      }
+    }
+    all.sort((a, b) => (b.at || 0) - (a.at || 0));
+    res.json(all);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Resume an interrupted / failed run by re-dispatching its original config.
+ * Scraper-side dedupe ensures already-saved records are skipped.
+ */
+app.post('/api/resume/:jobId', (req, res) => {
+  if (currentProcess) return res.status(409).json({ error: 'A run is already in progress' });
+  const origJobId = req.params.jobId;
+  const history = readHistory();
+  const original = history.find((h) => String(h.jobId) === String(origJobId));
+  if (!original) return res.status(404).json({ error: 'Original job config not found' });
+  // Strip runtime-only fields so startJob treats this as a fresh run with the same target
+  const { status, error, startTime, endTime, counters, currentTask, code, signal, ...config } = original;
+  // Let startJob mint a new jobId rather than collide with the original
+  delete config.jobId;
+  const result = startJob(config);
+  if (result.error) return res.status(500).json({ error: result.error });
+  res.json({ jobId: result.jobId, resumed: true, fromJobId: origJobId });
 });
 
 app.post('/api/retry/:jobId', (req, res) => {

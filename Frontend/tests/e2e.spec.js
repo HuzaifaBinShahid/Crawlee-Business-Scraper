@@ -96,8 +96,10 @@ async function installMocks(page, state) {
       state.status = { status: 'running', jobId: 'queue-1' };
       return json({ queued: count, jobIds: ['queue-1'] });
     }
+    if (p === '/failed') return json(state.allFailed || []);
     if (p.startsWith('/failed/')) return json([]);
     if (p.startsWith('/retry/')) return json({ jobId: 'retry-1', retrying: true });
+    if (p.startsWith('/resume/')) return json({ jobId: 'resume-1', resumed: true, fromJobId: p.split('/')[2] });
 
     return json({ error: 'not mocked: ' + p }, 404);
   });
@@ -480,5 +482,89 @@ test.describe('NumberInput', () => {
     // Decrease should work
     await minusBtn.click();
     await expect(input).toHaveValue('4');
+  });
+});
+
+test.describe('Concurrency input (#5)', () => {
+  test('visible only for non-nationwide (UK/FR) countries in Advanced panel', async ({ page }) => {
+    const state = createMockState();
+    await installMocks(page, state);
+    await page.goto('/');
+
+    // Default country is UK (non-nationwide) — expand Advanced
+    await page.getByTestId('toggle-advanced').click();
+    await expect(page.getByTestId('concurrency-input')).toBeVisible();
+
+    // Switch to PK (nationwide) — concurrency input should disappear
+    await page.getByTestId('run-country-select').click();
+    await page.getByRole('option', { name: /Pakistan/ }).click();
+    await page.getByTestId('toggle-advanced').click().catch(() => {}); // re-open if it collapsed
+    await expect(page.getByTestId('concurrency-input')).not.toBeVisible();
+
+    // Back to UK — should reappear
+    await page.getByTestId('run-country-select').click();
+    await page.getByRole('option', { name: /United Kingdom/ }).click();
+    await page.getByTestId('toggle-advanced').click().catch(() => {});
+    await expect(page.getByTestId('concurrency-input')).toBeVisible();
+  });
+});
+
+test.describe('Failed records filter (#16)', () => {
+  test('Failed chip shows aggregated failures with retry-all button', async ({ page }) => {
+    const state = createMockState();
+    state.allFailed = [
+      { jobId: '11', country: 'PK', city: 'Karachi', category: 'Gyms & Fitness', name: 'Broken Gym', url: 'https://example.com/a', error: 'timeout', at: 1000 },
+      { jobId: '11', country: 'PK', city: 'Karachi', category: 'Gyms & Fitness', name: 'Other Biz',  url: 'https://example.com/b', error: '404',     at: 1100 },
+      { jobId: '12', country: 'FR', city: 'Paris',   category: 'Repair Shops',   name: 'Cafe X',    url: 'https://example.com/c', error: 'timeout', at: 1200 },
+    ];
+    await installMocks(page, state);
+    await page.goto('/');
+    await page.getByTestId('tab-data').click();
+
+    await page.getByTestId('filter-failed').click();
+    await expect(page.getByTestId('failed-records-view')).toBeVisible();
+    await expect(page.getByText('3 failed records across 2 jobs')).toBeVisible();
+    await expect(page.getByText('Broken Gym')).toBeVisible();
+    await expect(page.getByText('Cafe X')).toBeVisible();
+
+    // Two retry buttons (one per grouped job)
+    await expect(page.locator('[data-testid="failed-retry-btn"]')).toHaveCount(2);
+  });
+
+  test('empty state renders when there are no failures', async ({ page }) => {
+    const state = createMockState();
+    state.allFailed = [];
+    await installMocks(page, state);
+    await page.goto('/');
+    await page.getByTestId('tab-data').click();
+    await page.getByTestId('filter-failed').click();
+    await expect(page.getByText(/No failed records yet/)).toBeVisible();
+  });
+});
+
+test.describe('Resume interrupted run (#17)', () => {
+  test('Resume button appears on interrupted/failed rows and triggers /api/resume', async ({ page }) => {
+    const state = createMockState();
+    state.history = [
+      {
+        jobId: 'h-interrupt', country: 'PK', city: 'Lahore', category: 'all',
+        status: 'interrupted', startTime: Date.now() - 120000, endTime: Date.now() - 60000,
+        counters: { found: 5, saved: 3, skipped: 0, duplicates: 0, failed: 0 },
+        error: 'Backend was restarted while this job was running.',
+      },
+      {
+        jobId: 'h-done', country: 'FR', city: 'Paris', category: 'Repair Shops',
+        status: 'completed', startTime: Date.now() - 300000, endTime: Date.now() - 240000,
+        counters: { found: 3, saved: 3, skipped: 0, duplicates: 0, failed: 0 },
+      },
+    ];
+    await installMocks(page, state);
+    await page.goto('/');
+    await page.getByTestId('tab-history').click();
+
+    // Only the interrupted row should have a Resume button (completed row shouldn't)
+    await expect(page.locator('[data-testid="resume-btn"]')).toHaveCount(1);
+    await page.locator('[data-testid="resume-btn"]').first().click();
+    await expect(page.getByText(/Resume started as job #resume-1/)).toBeVisible();
   });
 });
