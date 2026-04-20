@@ -15,7 +15,9 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.join(__dirname, 'data');
+// DATA_DIR holds history / settings / presets / failed. Tests override this
+// via process.env.DATA_DIR to avoid clobbering production data.
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PRESETS_FILE = path.join(DATA_DIR, 'presets.json');
@@ -74,30 +76,41 @@ let isQueueRunning = false;
 
 // ─── File helpers ────────────────────────────────────────────────────────────
 
-// Support both old format (businesses_PK_full_2026-04-15.json) and new (businesses_PK_client_full.json)
+// Accept both .json (wrapped) and .ndjson (line-delimited) variants across all
+// three filename conventions the scrapers have used:
+//   old dated:      businesses_PK_full_2026-04-15.(json|ndjson)
+//   old client:     businesses_PK_client_full_2026-04-15.(json|ndjson)
+//   current:        businesses_PK_client_full.(json|ndjson)
 function findLatestJsonFiles(dir) {
   if (!fs.existsSync(dir)) return [];
   const files = fs.readdirSync(dir);
-  const patternOld = /^businesses_([A-Za-z_]+)_(full|sample)_(\d{4}-\d{2}-\d{2})\.json$/;
-  const patternNew = /^businesses_([A-Za-z_]+)_client_(full|sample(?:_\d+)?)\.json$/;
+  // \.(?:json|ndjson)$ — match both extensions so we don't miss streamed NDJSON output
+  const patternDated = /^businesses_([A-Za-z_]+)(?:_client)?_(full|sample)_(\d{4}-\d{2}-\d{2})\.(json|ndjson)$/;
+  const patternClean = /^businesses_([A-Za-z_]+)_client_(full|sample(?:_\d+)?)\.(json|ndjson)$/;
   const matched = [];
   for (const f of files) {
-    let m = f.match(patternOld);
+    let m = f.match(patternDated);
     if (m) {
       const fullPath = path.join(dir, f);
-      matched.push({ fullPath, country: m[1], mode: m[2], mtime: fs.statSync(fullPath).mtimeMs });
+      matched.push({
+        fullPath, country: m[1], mode: m[2],
+        ext: m[4], mtime: fs.statSync(fullPath).mtimeMs,
+      });
       continue;
     }
-    m = f.match(patternNew);
+    m = f.match(patternClean);
     if (m) {
       const fullPath = path.join(dir, f);
-      matched.push({ fullPath, country: m[1], mode: m[2].includes('sample') ? 'sample' : 'full', mtime: fs.statSync(fullPath).mtimeMs });
+      matched.push({
+        fullPath, country: m[1],
+        mode: m[2].includes('sample') ? 'sample' : 'full',
+        ext: m[3], mtime: fs.statSync(fullPath).mtimeMs,
+      });
     }
   }
+  // Return ALL matched files — readData() does record-level dedup so nothing is hidden.
   matched.sort((a, b) => b.mtime - a.mtime);
-  const byCountry = {};
-  for (const f of matched) if (!byCountry[f.country]) byCountry[f.country] = f;
-  return Object.values(byCountry);
+  return matched;
 }
 
 function getAllJsonFiles() {
@@ -109,26 +122,99 @@ function getAllJsonFiles() {
   ];
 }
 
+/**
+ * Read every matched JSON file across all output + samples directories
+ * (both scrapers) and merge into one dataset, deduped by (name + rounded coords).
+ *
+ * Why merge instead of pick-one-per-country: if a small sample file is newer
+ * than the full output file for the same country, the old logic would hide the
+ * full output. Merging makes every scraped record visible.
+ */
+/**
+ * Count the total number of unique records currently on disk for a country.
+ * Used as a baseline / post-run measure so scrapers that don't emit [PROGRESS]
+ * events (like GroceryStore-script) still populate the Saved counter via file diff.
+ */
+function countRecordsForCountry(country) {
+  if (!country) return 0;
+  const wanted = String(country).toUpperCase();
+  const { data } = readData();
+  const seen = new Set();
+  for (const r of data) {
+    if (recordCountry(r) !== wanted) continue;
+    seen.add(recordKey(r));
+  }
+  return seen.size;
+}
+
+/**
+ * Stable key used to identify duplicate records across files (name + rounded coords).
+ * Matches the scraper's own dedupe key precision (~11m).
+ */
+function recordKey(r) {
+  const name = (r.name || r.businessName || '').toString().toLowerCase().trim();
+  const lat = r.latitude ?? r.lat;
+  const lon = r.longitude ?? r.lon;
+  if (lat != null && lon != null && !Number.isNaN(Number(lat))) {
+    const rLat = Math.round(Number(lat) * 1e4) / 1e4;
+    const rLon = Math.round(Number(lon) * 1e4) / 1e4;
+    return `${name}|${rLat}|${rLon}`;
+  }
+  return `${name}|${r.external_id || r.uniqueId || ''}`;
+}
+
+/**
+ * Load every scraped record from every matched file. Does NOT dedup — returns
+ * the raw merged list so callers can decide between unique / duplicates views.
+ * Handles both JSON (wrapped `{data: []}` or bare array) and NDJSON.
+ */
 function readData() {
   const allFiles = getAllJsonFiles();
-  const byCountry = {};
-  for (const f of allFiles) {
-    const existing = byCountry[f.country];
-    if (!existing || f.mtime > existing.mtime) byCountry[f.country] = f;
-  }
-  const toRead = Object.values(byCountry);
   const data = [];
   let metadata = {};
-  for (const { fullPath } of toRead) {
+
+  for (const { fullPath, ext } of allFiles) {
     try {
       const raw = fs.readFileSync(fullPath, 'utf-8');
-      const json = JSON.parse(raw);
-      const arr = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
-      data.push(...arr);
-      if (json.metadata && Object.keys(metadata).length === 0) metadata = json.metadata;
+      if (ext === 'ndjson') {
+        for (const line of raw.split('\n')) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const r = JSON.parse(trimmed);
+            if (r && typeof r === 'object') data.push(r);
+          } catch (_) { /* skip malformed line */ }
+        }
+      } else {
+        const json = JSON.parse(raw);
+        const arr = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
+        for (const r of arr) if (r && typeof r === 'object') data.push(r);
+        if (json.metadata && Object.keys(metadata).length === 0) metadata = json.metadata;
+      }
     } catch (_) { }
   }
   return { data, metadata };
+}
+
+/**
+ * Split raw records into `unique` (one record per dedupe key) and `duplicates`
+ * (every extra copy beyond the first). Returning ALL copies of a duplicated
+ * key is more useful for the user to inspect than just a single representative.
+ */
+function partitionByDedup(records) {
+  const byKey = new Map();
+  for (const r of records) {
+    const k = recordKey(r);
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(r);
+  }
+  const unique = [];
+  const duplicates = [];
+  for (const copies of byKey.values()) {
+    unique.push(copies[0]);
+    if (copies.length > 1) duplicates.push(...copies); // include all copies for visibility
+  }
+  return { unique, duplicates };
 }
 
 /**
@@ -391,6 +477,12 @@ function startJob(config) {
   console.log('[scraper] Spawning:', { cwd, scriptPath, args });
   const child = spawn('node', [scriptPath, ...args.slice(1)], { env, cwd });
 
+  // Snapshot on-disk record count for this country so we can compute a
+  // file-diff saved count on close — covers scrapers that don't emit [PROGRESS]
+  // events (GroceryStore-script UK/FR).
+  let baselineCount = 0;
+  try { baselineCount = countRecordsForCountry(country); } catch (_) { }
+
   const job = {
     jobId,
     status: 'running',
@@ -400,6 +492,7 @@ function startJob(config) {
     config,
     counters: { found: 0, saved: 0, skipped: 0, duplicates: 0, failed: 0 },
     currentTask: null,
+    baselineCount,
   };
   jobs.set(jobId, job);
   currentProcess = { jobId, child };
@@ -434,7 +527,9 @@ function startJob(config) {
   });
 
   child.on('close', (code, signal) => {
-    if (job) {
+    // Preserve user-stopped state: do NOT overwrite status/error when the user
+    // clicked Stop — SIGTERM would otherwise flip 'stopped' back to 'failed'.
+    if (job && !job.userStopped) {
       job.status = code === 0 ? 'completed' : 'failed';
       job.endTime = Date.now();
       job.code = code;
@@ -444,6 +539,20 @@ function startJob(config) {
         job.error = signal ? `Process killed (signal ${signal}).` : tail || `Process exited with code ${code}.`;
       }
     }
+
+    // File-diff fallback: if no [PROGRESS] events populated saved counter, compute delta from disk.
+    // Covers scrapers that don't emit structured progress events.
+    if (job && job.counters && job.counters.saved === 0 && job.status !== 'failed') {
+      try {
+        const finalCount = countRecordsForCountry(country);
+        const delta = Math.max(0, finalCount - (job.baselineCount || 0));
+        if (delta > 0) {
+          job.counters.saved = delta;
+          job.counters.found = Math.max(job.counters.found, delta);
+        }
+      } catch (_) { }
+    }
+
     appendHistory({
       jobId, ...config, status: job.status, error: job.error,
       startTime: job.startTime, endTime: job.endTime,
@@ -490,7 +599,12 @@ app.post('/api/run', (req, res) => {
 app.post('/api/run/stop', (req, res) => {
   if (!currentProcess) return res.status(409).json({ error: 'No run in progress' });
   const job = jobs.get(currentProcess.jobId);
-  if (job) { job.status = 'failed'; job.error = 'Stopped by user'; job.endTime = Date.now(); }
+  if (job) {
+    job.status = 'stopped';          // distinct from 'failed' — user-initiated, often with data saved
+    job.userStopped = true;           // flag for the close handler to leave status alone
+    job.error = 'Stopped by user';
+    job.endTime = Date.now();
+  }
   currentProcess.child.kill('SIGTERM');
   cleanupPauseFile();
   currentProcess = null;
@@ -775,26 +889,19 @@ app.get('/api/data', (req, res) => {
     const { filter, country, search } = req.query;
     let { data, metadata } = readData();
 
+    // Filter by country FIRST so duplicates are computed per-country scope
     if (country) {
       const wanted = String(country).toUpperCase();
       data = data.filter((r) => recordCountry(r) === wanted);
     }
 
+    const { unique, duplicates } = partitionByDedup(data);
+
     if (filter === 'duplicates') {
-      const seen = new Map();
-      const dups = [];
-      for (const r of data) {
-        const name = (r.name || r.businessName || '').toLowerCase();
-        const lat = r.latitude ?? r.lat ?? '';
-        const lon = r.longitude ?? r.lon ?? '';
-        const key = `${name}|${lat}|${lon}`;
-        if (seen.has(key)) dups.push(r);
-        else seen.set(key, true);
-      }
-      data = dups;
+      data = duplicates;
     } else if (filter === 'incomplete') {
-      // Works across schemas — checks both flat and nested shapes
-      data = data.filter((r) => {
+      // Works across schemas — checks both flat and nested shapes; operates on unique set
+      data = unique.filter((r) => {
         const has = (v) => v != null && v !== '' && v !== 0;
         const flags = [
           has(r.name || r.businessName),
@@ -807,6 +914,9 @@ app.get('/api/data', (req, res) => {
         const filled = flags.filter(Boolean).length;
         return filled < flags.length * 0.6;
       });
+    } else {
+      // Default view (filter === 'all' or missing) — unique records only
+      data = unique;
     }
 
     if (search) {

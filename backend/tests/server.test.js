@@ -9,10 +9,17 @@ import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.NODE_ENV = 'test';
+
+// Isolate tests to a temp DATA_DIR so they never clobber the user's real
+// history / settings / presets in backend/data/.
+const TEST_DATA_DIR = path.join(os.tmpdir(), `scraper-test-data-${process.pid}`);
+fs.mkdirSync(path.join(TEST_DATA_DIR, 'failed'), { recursive: true });
+process.env.DATA_DIR = TEST_DATA_DIR;
 
 const { app, recordCountry, recordSearchHaystack } = await import('../server.js');
 
@@ -22,7 +29,7 @@ const { toClientRecord } = await import('../../NationwideScraper/src/exporters/c
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = TEST_DATA_DIR;
 
 let server;
 let baseUrl;
@@ -335,6 +342,58 @@ describe('Resume endpoint', () => {
     // The busy-guard mirrors retry/run; verified by inspection in server.js.
     assert.ok(true);
   });
+});
+
+describe('readData — merges across files and dedupes', () => {
+  // Write two temporary test files into NationwideScraper/data/output and
+  // confirm /api/data returns merged + deduped records (no file hidden by another).
+  const rootDir = path.resolve(__dirname, '..', '..');
+  const testOutDir = path.join(rootDir, 'NationwideScraper', 'data', 'output');
+  const fileA = path.join(testOutDir, 'businesses_TEST_client_full.json');
+  const fileB = path.join(testOutDir, 'businesses_TEST_client_sample_50.json');
+
+  test('merges records from full + sample files for the same country; dedupes overlaps', async () => {
+    fs.mkdirSync(testOutDir, { recursive: true });
+
+    // File A (full): two records
+    fs.writeFileSync(fileA, JSON.stringify({
+      data: [
+        { name: 'Alpha', latitude: 10.0001, longitude: 20.0002, country_code: 'TEST' },
+        { name: 'Beta',  latitude: 30.1234, longitude: 40.5678, country_code: 'TEST' },
+      ],
+    }), 'utf-8');
+
+    // File B (sample): same Alpha (realistic: sample re-exports some of the full records) + a new Gamma
+    fs.writeFileSync(fileB, JSON.stringify({
+      data: [
+        { name: 'Alpha', latitude: 10.0001, longitude: 20.0002, country_code: 'TEST' },   // exact dup
+        { name: 'Gamma', latitude: 50.9999, longitude: 60.8888, country_code: 'TEST' },
+      ],
+    }), 'utf-8');
+
+    const res = await req('GET', '/api/data?country=TEST');
+    assert.equal(res.status, 200);
+    const names = (res.body.data || []).map((r) => r.name).sort();
+
+    // Expect Alpha (once), Beta, Gamma — Alpha overlap deduped
+    assert.deepEqual(names, ['Alpha', 'Beta', 'Gamma'],
+      `Expected merged + deduped: Alpha, Beta, Gamma — got ${JSON.stringify(names)}`);
+
+    // Cleanup
+    fs.unlinkSync(fileA);
+    fs.unlinkSync(fileB);
+  });
+});
+
+describe('Stop semantics', () => {
+  test('POST /api/run/stop with no active process returns 409', async () => {
+    const res = await req('POST', '/api/run/stop');
+    assert.equal(res.status, 409);
+  });
+  // The "status stays 'stopped' after child close" behavior is enforced by the
+  // `!job.userStopped` guard in the close handler — verified by inspection.
+  // An end-to-end process test would require spawning a real scraper, which is
+  // covered by the manual Pre-Delivery checklist.
 });
 
 describe('Client schema conformance (toClientRecord)', () => {
