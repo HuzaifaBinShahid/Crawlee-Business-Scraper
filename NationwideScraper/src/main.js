@@ -41,7 +41,7 @@ const argv = yargs(hideBin(process.argv))
   .option('sample', {
     alias: 's',
     type: 'boolean',
-    description: 'Sample mode: fetch 50 records total (~10 per category), then stop',
+    description: 'Sample mode: fetch 10 records total, then stop. Output written to data/samples/.',
     default: false,
   })
   .option('category', {
@@ -119,13 +119,20 @@ async function main() {
   const countryCode = normalizeCountryCode(countryInput);
   const countryDisplayName = getCountryDisplayName(countryInput);
   let categories = getCategories(countryCode || countryInput);
-  let locations = getLocations(countryCode || countryInput, isSample);
+  // When sample mode is on, getLocations normally returns only the first city
+  // (Karachi/Riyadh) as a quick-look smoke-test. If the user explicitly picked a
+  // city, ignore that default so we can honor their choice.
+  let locations = getLocations(countryCode || countryInput, isSample && !cityArg);
 
   if (cityArg) {
     const wanted = cityArg.toLowerCase();
-    const matched = locations.filter((loc) => loc.toLowerCase() === wanted);
+    // Location entries can be either plain strings or objects ({name, code}).
+    // Normalize before comparing to avoid `[object Object]` matches.
+    const locName = (loc) => (typeof loc === 'string' ? loc : (loc?.name || '')).trim();
+    const matched = locations.filter((loc) => locName(loc).toLowerCase() === wanted);
     if (matched.length === 0) {
-      logger.error(`No city "${cityArg}" found. Available: ${locations.join(', ')}`);
+      const available = locations.map(locName).filter(Boolean).join(', ');
+      logger.error(`No city "${cityArg}" found. Available: ${available}`);
       process.exit(1);
     }
     locations = matched;
@@ -150,7 +157,7 @@ async function main() {
   logger.info('NATIONWIDE SCRAPER — Google Maps only');
   logger.info('='.repeat(60));
   logger.info(`Country:     ${countryInput} (code: ${countryCode || countryInput})`);
-  logger.info(`Mode:        ${isSample ? 'SAMPLE (50 records)' : 'FULL'}`);
+  logger.info(`Mode:        ${isSample ? 'SAMPLE (10 records)' : 'FULL'}`);
   logger.info(`Categories:  ${categories.length} | Locations: ${locations.length}`);
   logger.info(`Output:      ${outputDir}`);
   logger.info('='.repeat(60));
@@ -158,7 +165,7 @@ async function main() {
   resetCounters();
 
   const countrySlug = countryCode || countryInput.replace(/\s+/g, '_');
-  const clientSuffix = isSample ? `_sample_50` : '_full';
+  const clientSuffix = isSample ? '_sample' : '_full';
   const clientPrefix = `businesses_${countrySlug}_client${clientSuffix}`;
 
   // Final output: ONLY these two files (CSV + JSON). NDJSON is a temporary streaming buffer,
@@ -209,7 +216,9 @@ async function main() {
   let writtenCount = 0;
 
   function onRecord(record) {
-    if (isSample) {
+    // Sample-mode region clamp (Karachi for PK, Riyadh for SA) only applies when
+    // the user didn't explicitly choose a city. If they did, trust that choice.
+    if (isSample && !cityArg) {
       const code = (countryCode || countryInput || '').toString();
       if (!isWithinSampleRegion(record, code)) return;
     }
@@ -239,7 +248,7 @@ async function main() {
     categories,
     locations,
     isSample,
-    sampleTargetTotal: isSample ? 50 : 0,
+    sampleTargetTotal: isSample ? 10 : 0,
     samplePerCategoryTarget: 10,
     maxConcurrency: concurrency,
     onRecord,

@@ -996,6 +996,13 @@ function searchKey(userData) {
   return `${categoryName}|${keyword}|${location}`;
 }
 
+/** Emit a structured progress event to stdout for the backend to parse. */
+function emitProgress(event, data = {}) {
+  try {
+    process.stdout.write('[PROGRESS] ' + JSON.stringify({ event, ...data, timestamp: Date.now() }) + '\n');
+  } catch (_) { }
+}
+
 export async function scrapeGoogleMaps({
   country,
   categories,
@@ -1006,6 +1013,7 @@ export async function scrapeGoogleMaps({
   completedSearches = null,
   onSearchComplete = null,
 }) {
+  const SAMPLE_TOTAL_CAP = 10; // Hard cap when isSample — stops the crawler once reached.
   const allRecords = [];
   const seenNames = new Set();
   const completedSet =
@@ -1101,9 +1109,16 @@ export async function scrapeGoogleMaps({
         country: cc,
       } = request.userData;
 
+      // Hard sample cap: if we've already got 10 records, skip this request.
+      if (isSample && allRecords.length >= SAMPLE_TOTAL_CAP) {
+        log.info('Sample cap reached, skipping remaining searches.');
+        return;
+      }
+
       log.info(
         `Processing: "${keyword}" in ${location} (${cc})`,
       );
+      emitProgress('task_start', { country: cc, city: location, category: categoryName, keyword });
 
       // Handle Google cookie consent
       try {
@@ -1148,14 +1163,16 @@ export async function scrapeGoogleMaps({
         `Found ${listingCards.length} listings for "${keyword}" in ${location}`,
       );
 
-      // In sample mode, take up to 3 listings per category search.
-      // This gives fallbacks if first listings are sponsored/skipped,
-      // aiming for ~15 records total (1 per category after dedup).
+      // In sample mode, take up to 10 listings per URL so the global
+      // SAMPLE_TOTAL_CAP (10) can be satisfied from a single search
+      // even when the subsequent URLs misbehave (Google anti-bot, tab crash, etc).
       const maxListings = isSample
-        ? Math.min(3, listingCards.length)
+        ? Math.min(SAMPLE_TOTAL_CAP, listingCards.length)
         : listingCards.length;
 
       for (let i = 0; i < maxListings; i++) {
+        // Respect global sample cap inside the inner loop too
+        if (isSample && allRecords.length >= SAMPLE_TOTAL_CAP) break;
         try {
           // Re-fetch cards (DOM may change after goBack)
           const currentCards = await page.$$(
@@ -1174,6 +1191,7 @@ export async function scrapeGoogleMaps({
             log.debug(
               `  Skipping sponsored: ${cardData.businessName}`,
             );
+            emitProgress('record_skipped', { reason: 'sponsored', name: cardData.businessName });
             continue;
           }
 
@@ -1199,6 +1217,12 @@ export async function scrapeGoogleMaps({
               seenNames.add(dedupKey);
               allRecords.push(record);
               if (onRecord) onRecord(record);
+              emitProgress('record_saved', {
+                name: record.businessName,
+                city: record.city,
+                category: categoryName,
+                country: cc,
+              });
               log.info(
                 `  [${allRecords.length}] ${record.businessName} - ${record.city}`,
               );
@@ -1206,6 +1230,7 @@ export async function scrapeGoogleMaps({
               log.debug(
                 `  Skipping duplicate: ${record.businessName}`,
               );
+              emitProgress('record_duplicate', { name: record.businessName });
             }
           }
 
@@ -1218,6 +1243,7 @@ export async function scrapeGoogleMaps({
           log.error(
             `Error processing listing ${i}: ${error.message}`,
           );
+          emitProgress('record_failed', { error: error.message });
           try {
             await page.goBack({
               waitUntil: 'domcontentloaded',
@@ -1228,6 +1254,7 @@ export async function scrapeGoogleMaps({
         }
       }
 
+      emitProgress('task_end', { country: cc, city: location, category: categoryName });
       await randomDelay(2000, 4000);
 
       if (onSearchComplete) onSearchComplete(request.userData);
@@ -1237,6 +1264,7 @@ export async function scrapeGoogleMaps({
       log.error(
         `Request failed after retries: ${request.url}`,
       );
+      emitProgress('record_failed', { url: request.url, error: 'Request failed after retries' });
     },
   });
 
