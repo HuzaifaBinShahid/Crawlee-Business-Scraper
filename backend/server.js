@@ -161,7 +161,7 @@ function readStats() {
     if (low.includes('yellow')) return 'Yellow Pages';
     return raw;
   };
-  const recordCategory = (r) => (r.category_raw || r.category || '').toString().trim();
+  const recordCategory = (r) => (r.category || r.category_raw || '').toString().trim();
 
   for (const r of data) {
     const cat = recordCategory(r);
@@ -652,13 +652,13 @@ app.get('/api/quality', (req, res) => {
 
     // Abstract field getters so both nationwide (flat) and GroceryStore (nested) records contribute equally
     const fieldAccessors = {
-      name:    (r) => r.name || r.businessName,
-      phone:   (r) => r.phone || r.contact?.phone,
-      website: (r) => r.website || r.contact?.website,
-      address: (r) => typeof r.address === 'string' ? r.address : (r.address?.street || r.address?.city),
-      lat:     (r) => r.lat ?? r.latitude,
-      lon:     (r) => r.lon ?? r.longitude,
-      category:(r) => r.category_raw || r.category,
+      name:      (r) => r.name || r.businessName,
+      phone:     (r) => r.phone || r.contact?.phone,
+      website:   (r) => r.website || r.contact?.website,
+      address:   (r) => typeof r.address === 'string' ? r.address : (r.address?.street || r.address?.city),
+      latitude:  (r) => r.latitude ?? r.lat,
+      longitude: (r) => r.longitude ?? r.lon,
+      category:  (r) => r.category || r.category_raw,
     };
     const fieldKeys = Object.keys(fieldAccessors);
     const missing = Object.fromEntries(fieldKeys.map((k) => [k, 0]));
@@ -676,8 +676,8 @@ app.get('/api/quality', (req, res) => {
       if (filledCount < fieldKeys.length * 0.6) incompleteCount++;
 
       const name = (r.name || r.businessName || '').toLowerCase();
-      const lat = r.lat ?? r.latitude ?? '';
-      const lon = r.lon ?? r.longitude ?? '';
+      const lat = r.latitude ?? r.lat ?? '';
+      const lon = r.longitude ?? r.lon ?? '';
       const key = `${name}|${lat}|${lon}`;
       if (dedupeKeys.has(key)) duplicates++; else dedupeKeys.add(key);
     }
@@ -785,8 +785,8 @@ app.get('/api/data', (req, res) => {
       const dups = [];
       for (const r of data) {
         const name = (r.name || r.businessName || '').toLowerCase();
-        const lat = r.lat ?? r.latitude ?? '';
-        const lon = r.lon ?? r.longitude ?? '';
+        const lat = r.latitude ?? r.lat ?? '';
+        const lon = r.longitude ?? r.lon ?? '';
         const key = `${name}|${lat}|${lon}`;
         if (seen.has(key)) dups.push(r);
         else seen.set(key, true);
@@ -801,8 +801,8 @@ app.get('/api/data', (req, res) => {
           has(r.phone || r.contact?.phone),
           has(r.website || r.contact?.website),
           has(typeof r.address === 'string' ? r.address : r.address?.street || r.address?.city),
-          has(r.lat ?? r.latitude),
-          has(r.lon ?? r.longitude),
+          has(r.latitude ?? r.lat),
+          has(r.longitude ?? r.lon),
         ];
         const filled = flags.filter(Boolean).length;
         return filled < flags.length * 0.6;

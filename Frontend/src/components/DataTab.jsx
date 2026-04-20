@@ -93,9 +93,9 @@ export function DataTab() {
     let list = data;
     if (categoryFilter) {
       const want = categoryFilter.toLowerCase();
-      // Match across both schemas: nationwide client uses `category_raw`, GroceryStore uses `category`
+      // Match across every schema: client-spec `category`, legacy `category_raw`, old `category`
       list = list.filter((r) => {
-        const cat = (r.category_raw || r.category || '').toLowerCase();
+        const cat = (r.category || r.category_raw || '').toLowerCase();
         return cat === want;
       });
     }
@@ -141,7 +141,7 @@ export function DataTab() {
   const COLUMNS = [
     { key: 'external_id', label: <SortHeader k="external_id" label="ID" />, render: (v, row) => v || row.uniqueId || '—' },
     { key: 'name', label: <SortHeader k="name" label="Name" />, render: (_, row) => row.name || row.businessName || '—' },
-    { key: 'category_raw', label: <SortHeader k="category_raw" label="Category" />, render: (v, row) => safe(v || row.category) },
+    { key: 'category', label: <SortHeader k="category" label="Category" />, render: (v, row) => safe(v || row.category_raw) },
     { key: 'city', label: <SortHeader k="city" label="City" />, render: (v, row) => safe(v || row.address?.city) },
     {
       key: 'country_code',

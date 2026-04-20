@@ -16,6 +16,10 @@ process.env.NODE_ENV = 'test';
 
 const { app, recordCountry, recordSearchHaystack } = await import('../server.js');
 
+// Import the scraper's client-export transformer so we can verify the exact
+// schema delivered to the client.
+const { toClientRecord } = await import('../../NationwideScraper/src/exporters/clientExport.js');
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.join(__dirname, '..', 'data');
@@ -330,6 +334,83 @@ describe('Resume endpoint', () => {
     // validates the "original job must exist in history" path. 404 covers the unknown case above.
     // The busy-guard mirrors retry/run; verified by inspection in server.js.
     assert.ok(true);
+  });
+});
+
+describe('Client schema conformance (toClientRecord)', () => {
+  // The client contractually requires this exact field list in the output records.
+  const REQUIRED_FIELDS = [
+    'external_id', 'name', 'category', 'address', 'city', 'postcode',
+    'country_code', 'phone', 'website', 'latitude', 'longitude',
+    'opening_hours', 'source', 'source_url',
+    // metadata
+    'scraped_at', 'category_raw', 'country',
+  ];
+
+  const sampleInput = {
+    uniqueId: 'PK-KHI-000042',
+    businessName: 'FitLife Karachi',
+    category: 'Gyms & Fitness',
+    street: '42 Main Blvd',
+    zipCode: '75500',
+    city: 'Karachi',
+    state: 'Sindh',
+    country: 'PK',
+    phone: '+923001234567',
+    website: 'https://fitlife.pk',
+    googleMapsLink: 'https://www.google.com/maps/place/FitLife/@24.8,67.0',
+    latitude: 24.8607,
+    longitude: 67.0011,
+    openingHours: 'Mon-Sun 06:00-23:00',
+    source: 'Google Maps',
+  };
+
+  test('every required client field is present on the output record', () => {
+    const out = toClientRecord(sampleInput);
+    for (const field of REQUIRED_FIELDS) {
+      assert.ok(field in out, `Missing required client-schema field: ${field}`);
+    }
+  });
+
+  test('latitude/longitude are numbers (not lat/lon)', () => {
+    const out = toClientRecord(sampleInput);
+    assert.equal(typeof out.latitude, 'number');
+    assert.equal(typeof out.longitude, 'number');
+    assert.equal(out.latitude, 24.8607);
+    assert.equal(out.longitude, 67.0011);
+    // Legacy names must NOT appear in the new output
+    assert.ok(!('lat' in out), 'Unexpected legacy field `lat` in output');
+    assert.ok(!('lon' in out), 'Unexpected legacy field `lon` in output');
+  });
+
+  test('country_code is uppercased + country full name is populated', () => {
+    const out = toClientRecord(sampleInput);
+    assert.equal(out.country_code, 'PK');
+    assert.equal(out.country, 'Pakistan');
+  });
+
+  test('category and category_raw both present', () => {
+    const out = toClientRecord(sampleInput);
+    assert.equal(out.category_raw, 'Gyms & Fitness');
+    assert.ok(out.category); // may be title-cased
+  });
+
+  test('scraped_at is an ISO timestamp', () => {
+    const out = toClientRecord(sampleInput);
+    assert.match(out.scraped_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  });
+
+  test('source_url maps from googleMapsLink', () => {
+    const out = toClientRecord(sampleInput);
+    assert.equal(out.source_url, sampleInput.googleMapsLink);
+  });
+
+  test('null-safe on minimal input (no missing-field crash)', () => {
+    const out = toClientRecord({ businessName: 'Bare' });
+    assert.equal(out.name, 'Bare');
+    assert.equal(out.latitude, null);
+    assert.equal(out.longitude, null);
+    assert.equal(out.country_code, null);
   });
 });
 

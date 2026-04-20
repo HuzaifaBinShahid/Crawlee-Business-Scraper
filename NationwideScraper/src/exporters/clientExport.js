@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import logger from '../utils/logger.js';
 import { toTitleCase } from '../processors/normalizer.js';
+import { getCountryDisplayName } from '../config/countryNames.js';
 
 function fullAddress(record) {
   const parts = [record.street, record.zipCode ? record.zipCode.trim() : '', record.city, record.state].filter(Boolean);
@@ -11,12 +12,15 @@ function fullAddress(record) {
 function sourceLabel(record) {
   const s = (record.source || '').toLowerCase();
   if (s.includes('google') || s === 'google maps') return 'google_maps';
+  if (s.includes('yellow')) return 'yellow_pages';
   return s || 'google_maps';
 }
 
 /**
- * @param {Object} record - Has uniqueId, businessName, category, country (PK/SA), etc.
- * @returns {Object} Client-format record
+ * Produce a record in the exact client-specified schema:
+ *   external_id, name, category, address, city, postcode, country_code,
+ *   phone, website, latitude, longitude, opening_hours, source, source_url
+ * Plus metadata: scraped_at, category_raw, country, city
  */
 export function toClientRecord(record) {
   const lat = record.latitude;
@@ -24,24 +28,33 @@ export function toClientRecord(record) {
   const numLat = typeof lat === 'number' ? lat : parseFloat(lat);
   const numLon = typeof lng === 'number' ? lng : parseFloat(lng);
   const categoryRaw = (record.category || '').trim();
+  const categoryTitled = toTitleCase(categoryRaw) || categoryRaw;
+  const countryCode = (record.country || '').trim().toUpperCase() || null;
+  const countryFull = countryCode ? getCountryDisplayName(countryCode) || countryCode : null;
+
   return {
+    // ─── Main client schema ────────────────────────────────────
     external_id: record.uniqueId || '',
     name: (record.businessName || '').trim(),
-    category_raw: toTitleCase(categoryRaw) || categoryRaw,
-    lat: Number.isNaN(numLat) ? null : numLat,
-    lon: Number.isNaN(numLon) ? null : numLon,
+    category: categoryTitled || null,
     address: fullAddress(record),
     city: (record.city || '').trim(),
-    postcode: (record.zipCode || '').trim(),
-    country_code: (record.country || '').trim() || null,
+    postcode: (record.zipCode || '').trim() || null,
+    country_code: countryCode,
     phone: (record.phone || '').trim() || null,
     website: (record.website || '').trim() || null,
+    latitude: Number.isNaN(numLat) ? null : numLat,
+    longitude: Number.isNaN(numLon) ? null : numLon,
+    opening_hours: (record.openingHours || '').trim() || null,
     source: sourceLabel(record),
     source_url: (record.googleMapsLink || '').trim() || null,
-    opening_hours: (record.openingHours || '').trim() || null,
+    // ─── Metadata ──────────────────────────────────────────────
+    scraped_at: record.scraped_at || new Date().toISOString(),
+    category_raw: categoryRaw || null,
+    country: countryFull,
+    // ─── Bonus quality signals (not required by client, harmless extras) ──
     rating: record.rating ?? null,
     review_count: record.review_count ?? null,
-    scraped_at: record.scraped_at || new Date().toISOString(),
   };
 }
 
@@ -70,7 +83,16 @@ export function dedupeClientRecords(records) {
   return out;
 }
 
-const HEADERS = ['external_id', 'name', 'category_raw', 'lat', 'lon', 'address', 'city', 'postcode', 'country_code', 'phone', 'website', 'source', 'source_url', 'opening_hours', 'rating', 'review_count', 'scraped_at'];
+// Column order matches client's standardized schema: main fields first, then metadata, then bonus.
+const HEADERS = [
+  'external_id', 'name', 'category', 'address', 'city', 'postcode',
+  'country_code', 'phone', 'website', 'latitude', 'longitude',
+  'opening_hours', 'source', 'source_url',
+  // Metadata
+  'scraped_at', 'category_raw', 'country',
+  // Bonus
+  'rating', 'review_count',
+];
 
 function escapeCsv(v) {
   if (v === null || v === undefined) return '""';

@@ -185,7 +185,7 @@ async function main() {
           if (!line.trim()) continue;
           try {
             const r = JSON.parse(line);
-            const key = getDedupeKey({ businessName: r.name, latitude: r.lat, longitude: r.lon });
+            const key = getDedupeKey({ businessName: r.name, latitude: r.latitude ?? r.lat, longitude: r.longitude ?? r.lon });
             if (key) dedupeSet.add(key);
           } catch (e) {}
         }
@@ -193,7 +193,7 @@ async function main() {
         const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         const arr = Array.isArray(parsed) ? parsed : parsed.data || [];
         for (const r of arr) {
-          const key = getDedupeKey({ businessName: r.name, latitude: r.lat, longitude: r.lon });
+          const key = getDedupeKey({ businessName: r.name, latitude: r.latitude ?? r.lat, longitude: r.longitude ?? r.lon });
           if (key) dedupeSet.add(key);
         }
       }
