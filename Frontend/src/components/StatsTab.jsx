@@ -7,11 +7,42 @@ import { SectionHeading } from './SectionHeading';
 import { useTheme } from '../theme/ThemeProvider';
 
 // Rich palette tuned for both light and dark backgrounds
+// Hue-spaced palette — adjacent colors stay visually distinct.
+// Reordered so the first 4 colors (the most common case for "By country")
+// are purple / orange / green / pink — no two look similar.
 const PALETTE = [
-  '#5e6ad2', '#8b5cf6', '#ec4899', '#f59e0b',
-  '#10b981', '#0ea5e9', '#14b8a6', '#f97316',
-  '#a855f7', '#ef4444', '#06b6d4', '#eab308',
+  '#5e6ad2', // purple (accent)
+  '#f59e0b', // orange
+  '#10b981', // green
+  '#ec4899', // pink
+  '#0ea5e9', // sky blue
+  '#a855f7', // violet
+  '#f97316', // orange-red
+  '#14b8a6', // teal
+  '#eab308', // yellow
+  '#ef4444', // red
+  '#06b6d4', // cyan
+  '#8b5cf6', // indigo
 ];
+
+// Fixed per-country color so the same country always shows the same color
+// in "By country" pie regardless of sort order / dataset composition.
+// Picked for MAXIMUM contrast against each other — a neighboring country
+// is never a shade of the same hue.
+const COUNTRY_COLOR = {
+  UK: '#0ea5e9', // sky blue
+  GB: '#0ea5e9',
+  FR: '#ef4444', // red
+  PK: '#10b981', // green
+  SA: '#f59e0b', // amber (Saudi flag is green too, but we avoid near-identical greens on the chart)
+  DE: '#a855f7', // violet
+  ES: '#ec4899', // pink
+  IT: '#14b8a6', // teal
+  NL: '#f97316', // orange
+  BE: '#eab308', // yellow
+  PT: '#06b6d4', // cyan
+  IE: '#84cc16', // lime
+};
 
 function toEntries(obj) {
   if (!obj || typeof obj !== 'object') return [];
@@ -141,7 +172,12 @@ export function StatsTab() {
         color: axisColor, fontSize: 11, lineHeight: 14,
       },
       labelLine: { length: 10, length2: 6, lineStyle: { color: gridColor } },
-      data: byCountry.map((d, i) => ({ ...d, itemStyle: { color: PALETTE[i % PALETTE.length] } })),
+      data: byCountry.map((d, i) => ({
+        ...d,
+        itemStyle: {
+          color: COUNTRY_COLOR[String(d.name).toUpperCase()] || PALETTE[i % PALETTE.length],
+        },
+      })),
       emphasis: {
         scale: true, scaleSize: 6,
         itemStyle: { shadowBlur: 18, shadowColor: 'rgba(0,0,0,0.18)' },

@@ -137,7 +137,7 @@ test.describe('Run controls', () => {
     await page.goto('/');
 
     // Enable sample mode so no warning modal appears
-    await page.getByText('Sample run (small dataset)').click();
+    await page.getByText('Sample run (10 records)').click();
     await page.getByTestId('run-btn').click();
     await expect(page.getByTestId('pause-btn')).toBeVisible();
     await expect(page.getByTestId('stop-btn')).toBeVisible();
@@ -163,7 +163,7 @@ test.describe('Run controls', () => {
     await page.getByTestId('run-country-select').click();
     await page.getByRole('option', { name: /Pakistan/ }).click();
     // Enable sample so no warning modal appears
-    await page.getByText('Sample run (small dataset)').click();
+    await page.getByText('Sample run (10 records)').click();
     await page.getByTestId('run-btn').click();
 
     // Wait for progress panel to appear
@@ -207,7 +207,7 @@ test.describe('Warning modal for large runs', () => {
 
     await page.getByTestId('run-country-select').click();
     await page.getByRole('option', { name: /Pakistan/ }).click();
-    await page.getByText('Sample run (small dataset)').click();
+    await page.getByText('Sample run (10 records)').click();
     await page.getByTestId('run-btn').click();
 
     // No warning should appear
@@ -411,6 +411,29 @@ test.describe('History tab', () => {
     await page.goto('/');
     await page.getByTestId('tab-history').click();
     await expect(page.getByText('No runs yet.')).toBeVisible();
+  });
+
+  test('Stopped status renders as amber pill (distinct from Failed)', async ({ page }) => {
+    const state = createMockState();
+    state.history = [
+      {
+        jobId: 'h-stopped', country: 'PK', city: 'Karachi', category: 'all',
+        status: 'stopped', startTime: Date.now() - 60000, endTime: Date.now() - 30000,
+        counters: { found: 8, saved: 8, skipped: 0, duplicates: 0, failed: 0 },
+        error: 'Stopped by user',
+      },
+    ];
+    await installMocks(page, state);
+    await page.goto('/');
+    await page.getByTestId('tab-history').click();
+
+    // The Stopped row should render and show the Saved count (not zero)
+    await expect(page.getByTestId('history-row')).toHaveCount(1);
+    await expect(page.getByText('Stopped')).toBeVisible();
+    // "Saved" cell in the row has the preserved counter; look for an exact "8" cell
+    await expect(page.getByRole('cell', { name: '8', exact: true })).toBeVisible();
+    // Resume button should appear for a stopped run so the user can continue
+    await expect(page.getByTestId('resume-btn')).toBeVisible();
   });
 });
 

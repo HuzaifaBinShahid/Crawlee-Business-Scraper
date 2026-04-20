@@ -39,7 +39,7 @@ const SOURCE_OPTIONS = [
 ];
 
 function estimateRun({ categories, cities, sample }) {
-  if (sample) return { records: 50, hours: 0.1 };
+  if (sample) return { records: 10, hours: 0.05 };
   const cats = Number(categories) || 8;
   const locs = Number(cities) || 10;
   const avgPerSearch = 40;
@@ -454,7 +454,7 @@ export function RunScraperTab({ runState, setRunState }) {
             </div>
 
             <div className="mb-3">
-              <Checkbox label="Sample run (small dataset)" checked={sample} onChange={setSample} />
+              <Checkbox label="Sample run (10 records)" checked={sample} onChange={setSample} />
             </div>
 
             {isNationwide && (

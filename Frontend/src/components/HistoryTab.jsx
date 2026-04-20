@@ -33,6 +33,7 @@ function StatusPill({ status }) {
     completed:   { bg: 'var(--success-soft)', fg: 'var(--success)', icon: CheckCircle, label: 'Done' },
     failed:      { bg: 'var(--danger-soft)',  fg: 'var(--danger)',  icon: XCircle,      label: 'Failed' },
     running:     { bg: 'var(--info-soft)',    fg: 'var(--info)',    icon: Clock,        label: 'Running' },
+    stopped:     { bg: 'var(--warning-soft)', fg: 'var(--warning)', icon: XCircle,      label: 'Stopped' },
     interrupted: { bg: 'var(--warning-soft)', fg: 'var(--warning)', icon: XCircle,      label: 'Interrupted' },
   };
   const c = map[status] || map.failed;
@@ -186,7 +187,7 @@ export function HistoryTab() {
                     <Td color="var(--text-muted)" size="xs" className="whitespace-nowrap">{formatDuration(h.startTime, h.endTime)}</Td>
                     <Td align="right">
                       <div className="inline-flex items-center gap-3 justify-end whitespace-nowrap">
-                        {(h.status === 'interrupted' || h.status === 'failed') && (
+                        {(h.status === 'interrupted' || h.status === 'failed' || h.status === 'stopped') && (
                           <button
                             onClick={() => handleResume(h.jobId)}
                             data-testid="resume-btn"
