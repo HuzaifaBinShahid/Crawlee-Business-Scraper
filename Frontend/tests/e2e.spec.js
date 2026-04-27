@@ -25,6 +25,16 @@ function createMockState() {
     data: [],
     categories: ['Health & Emergency', 'Gyms & Fitness', 'Food & Beverage'],
     cities: { PK: ['Karachi', 'Lahore', 'Islamabad'], SA: ['Riyadh', 'Jeddah'] },
+    citiesFull: {
+      PK: [{ name: 'Karachi', code: 'KHI' }, { name: 'Lahore', code: 'LHE' }, { name: 'Islamabad', code: 'ISB' }],
+      SA: [{ name: 'Riyadh', code: 'RUH' }, { name: 'Jeddah', code: 'JED' }],
+    },
+    countries: [
+      { code: 'UK', name: 'United Kingdom', scraper: 'grocery' },
+      { code: 'FR', name: 'France',         scraper: 'grocery' },
+      { code: 'PK', name: 'Pakistan',       scraper: 'nationwide' },
+      { code: 'SA', name: 'Saudi Arabia',   scraper: 'nationwide' },
+    ],
   };
 }
 
@@ -73,9 +83,54 @@ async function installMocks(page, state) {
     if (p === '/stats') return json({});
     if (p === '/quality') return json({ total: state.data.length, completeness: 80, missing: {}, duplicates: 0, incomplete: 0 });
     if (p === '/categories') return json(state.categories);
-    if (p.startsWith('/cities')) {
-      const country = url.searchParams.get('country');
-      return json(state.cities[country] || []);
+    // Cities — /cities?country=XX returns names; /cities/:cc/full returns full {name,code} entries
+    {
+      const fullMatch = p.match(/^\/cities\/([^/]+)\/full$/);
+      if (fullMatch) {
+        const cc = fullMatch[1].toUpperCase();
+        return json(state.citiesFull[cc] || []);
+      }
+      const cityRm = p.match(/^\/cities\/([^/]+)\/([^/]+)$/);
+      if (cityRm && method === 'DELETE') {
+        const cc = cityRm[1].toUpperCase();
+        const target = decodeURIComponent(cityRm[2]).toLowerCase();
+        state.citiesFull[cc] = (state.citiesFull[cc] || []).filter((c) => c.name.toLowerCase() !== target);
+        state.cities[cc] = (state.citiesFull[cc] || []).map((c) => c.name);
+        return json({ removed: target, cities: state.citiesFull[cc] });
+      }
+      if (p === '/cities' && method === 'POST') {
+        const { country, cities } = postData || {};
+        const cc = String(country || '').toUpperCase();
+        const cleaned = (cities || []).map((c) => typeof c === 'string'
+          ? { name: c.trim(), code: '' }
+          : { name: String(c.name || '').trim(), code: String(c.code || '').toUpperCase() })
+          .filter((c) => c.name);
+        state.citiesFull[cc] = cleaned;
+        state.cities[cc] = cleaned.map((c) => c.name);
+        return json({ country: cc, cities: cleaned });
+      }
+      if (p.startsWith('/cities')) {
+        const country = url.searchParams.get('country');
+        return json(state.cities[country] || []);
+      }
+    }
+    // Countries registry
+    if (p === '/countries') {
+      if (method === 'POST') {
+        const { code, name, scraper } = postData || {};
+        const cc = String(code || '').toUpperCase().trim();
+        const scraperType = scraper === 'grocery' ? 'grocery' : 'nationwide';
+        const entry = { code: cc, name: String(name || '').trim(), scraper: scraperType };
+        const idx = state.countries.findIndex((c) => c.code === cc);
+        if (idx >= 0) state.countries[idx] = entry; else state.countries.push(entry);
+        return json(entry);
+      }
+      return json(state.countries);
+    }
+    if (p.startsWith('/countries/')) {
+      const cc = decodeURIComponent(p.slice('/countries/'.length)).toUpperCase();
+      state.countries = state.countries.filter((c) => c.code !== cc);
+      return json({ deleted: cc });
     }
     if (p === '/run') {
       state.status = { status: 'running', jobId: 'mock-1' };
@@ -589,5 +644,77 @@ test.describe('Resume interrupted run (#17)', () => {
     await expect(page.locator('[data-testid="resume-btn"]')).toHaveCount(1);
     await page.locator('[data-testid="resume-btn"]').first().click();
     await expect(page.getByText(/Resume started as job #resume-1/)).toBeVisible();
+  });
+});
+
+test.describe('Countries & Cities admin', () => {
+  test('Settings tab shows all seeded countries', async ({ page }) => {
+    const state = createMockState();
+    await installMocks(page, state);
+    await page.goto('/');
+    await page.getByTestId('tab-settings').click();
+
+    await expect(page.getByTestId('countries-list')).toBeVisible();
+    await expect(page.getByTestId('delete-country-UK')).toBeVisible();
+    await expect(page.getByTestId('delete-country-FR')).toBeVisible();
+    await expect(page.getByTestId('delete-country-PK')).toBeVisible();
+    await expect(page.getByTestId('delete-country-SA')).toBeVisible();
+  });
+
+  test('admin can add a new country and it appears in the Run dropdown', async ({ page }) => {
+    const state = createMockState();
+    await installMocks(page, state);
+    await page.goto('/');
+
+    // Add Germany via Settings
+    await page.getByTestId('tab-settings').click();
+    await page.getByTestId('new-country-code').fill('DE');
+    await page.getByTestId('new-country-name').fill('Germany');
+    await page.getByTestId('add-country-btn').click();
+    await expect(page.getByTestId('delete-country-DE')).toBeVisible();
+
+    // Switch to Run tab — Germany should appear in the country dropdown
+    await page.getByTestId('tab-run').click();
+    await page.getByTestId('run-country-select').click();
+    await expect(page.getByRole('option', { name: /Germany/ })).toBeVisible();
+  });
+
+  test('admin can add cities for a new nationwide country', async ({ page }) => {
+    const state = createMockState();
+    await installMocks(page, state);
+    await page.goto('/');
+
+    await page.getByTestId('tab-settings').click();
+    // Add Germany
+    await page.getByTestId('new-country-code').fill('DE');
+    await page.getByTestId('new-country-name').fill('Germany');
+    await page.getByTestId('add-country-btn').click();
+
+    // Open Manage cities for DE
+    await page.getByTestId('manage-cities-DE').click();
+    await page.getByTestId('new-city-name-DE').fill('Berlin');
+    await page.getByTestId('new-city-code-DE').fill('BER');
+    await page.getByTestId('add-city-btn-DE').click();
+
+    // City should appear in mock state
+    await expect.poll(() => state.citiesFull.DE?.length || 0).toBe(1);
+    expect(state.citiesFull.DE[0]).toMatchObject({ name: 'Berlin', code: 'BER' });
+  });
+
+  test('removing a country drops it from the dropdown', async ({ page }) => {
+    const state = createMockState();
+    await installMocks(page, state);
+    await page.goto('/');
+
+    page.on('dialog', (d) => d.accept());
+
+    await page.getByTestId('tab-settings').click();
+    await page.getByTestId('delete-country-SA').click();
+    await expect(page.getByTestId('delete-country-SA')).toHaveCount(0);
+
+    // The Run-tab dropdown should no longer offer Saudi Arabia
+    await page.getByTestId('tab-run').click();
+    await page.getByTestId('run-country-select').click();
+    await expect(page.getByRole('option', { name: /Saudi Arabia/ })).toHaveCount(0);
   });
 });

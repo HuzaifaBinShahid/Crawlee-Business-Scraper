@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Select } from './Select';
 import { CountrySelect } from './CountrySelect';
 import { CategorySelect } from './CategorySelect';
@@ -22,15 +22,7 @@ import {
   getCategories, getCities, submitQueue, getSettings,
   getPresets, savePreset, deletePreset,
 } from '../api/client';
-
-const COUNTRY_OPTIONS = [
-  { value: 'UK', label: 'UK' },
-  { value: 'FR', label: 'France' },
-  { value: 'PK', label: 'Pakistan' },
-  { value: 'SA', label: 'Saudi Arabia' },
-];
-
-const NATIONWIDE_COUNTRIES = ['PK', 'SA'];
+import { useCountries, nationwideCodes } from '../hooks/useCountries';
 
 const SOURCE_OPTIONS = [
   { value: 'all',    label: 'All sources',   __icon: LayoutGrid },
@@ -57,6 +49,9 @@ function sliderFillStyle(min, max, value) {
 }
 
 export function RunScraperTab({ runState, setRunState }) {
+  const { countries } = useCountries();
+  const NATIONWIDE_COUNTRIES = useMemo(() => nationwideCodes(countries), [countries]);
+
   const [country, setCountry] = useState('UK');
   const [category, setCategory] = useState('all');
   const [source, setSource] = useState('all');

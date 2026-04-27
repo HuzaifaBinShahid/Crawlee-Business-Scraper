@@ -9,7 +9,8 @@ import { fileURLToPath } from 'url';
 import {
   SCRAPER_DIR, OUTPUT_DIR, SAMPLES_DIR,
   NATIONWIDE_DIR, NATIONWIDE_OUTPUT_DIR, NATIONWIDE_SAMPLES_DIR,
-  PORT, CATEGORIES, NATIONWIDE_CATEGORIES, NATIONWIDE_COUNTRIES, NATIONWIDE_CITIES,
+  PORT, CATEGORIES, NATIONWIDE_CATEGORIES,
+  DEFAULT_COUNTRIES, NATIONWIDE_CITIES_DIR,
 } from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,6 +22,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const PRESETS_FILE = path.join(DATA_DIR, 'presets.json');
+const COUNTRIES_FILE = path.join(DATA_DIR, 'countries.json');
 const FAILED_DIR = path.join(DATA_DIR, 'failed');
 
 // Ensure data dirs exist
@@ -62,6 +64,7 @@ ensureJsonFile(SETTINGS_FILE, {
   proxies: [],
 });
 ensureJsonFile(PRESETS_FILE, []);
+ensureJsonFile(COUNTRIES_FILE, DEFAULT_COUNTRIES);
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -284,8 +287,52 @@ function findFileByCountry(country, format) {
   return best;
 }
 
+// ─── Country registry (admin-managed at runtime) ─────────────────────────────
+
+function readCountries() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(COUNTRIES_FILE, 'utf-8'));
+    return Array.isArray(arr) ? arr : [];
+  } catch (_) { return []; }
+}
+
+function writeCountries(list) {
+  fs.writeFileSync(COUNTRIES_FILE, JSON.stringify(list, null, 2), 'utf-8');
+}
+
+function lookupCountry(code) {
+  if (!code) return null;
+  const want = String(code).toUpperCase();
+  return readCountries().find((c) => String(c.code).toUpperCase() === want) || null;
+}
+
 function isNationwideCountry(country) {
-  return NATIONWIDE_COUNTRIES.includes((country || '').toUpperCase());
+  const entry = lookupCountry(country);
+  // Default to nationwide for unknown codes — the generic engine accepts any country name.
+  if (!entry) return true;
+  return entry.scraper !== 'grocery';
+}
+
+// ─── Cities registry (one JSON file per country in NationwideScraper/src/config/cities/) ─
+
+function citiesFilePath(code) {
+  return path.join(NATIONWIDE_CITIES_DIR, `${String(code).toLowerCase()}.json`);
+}
+
+function readCities(code) {
+  const fp = citiesFilePath(code);
+  if (!fs.existsSync(fp)) return [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(fp, 'utf-8'));
+    if (!Array.isArray(raw)) return [];
+    // Always return a uniform [{name, code}] shape — file may store either strings or objects
+    return raw.map((c) => typeof c === 'string' ? { name: c, code: '' } : { name: c.name || '', code: c.code || '' });
+  } catch (_) { return []; }
+}
+
+function writeCities(code, cities) {
+  if (!fs.existsSync(NATIONWIDE_CITIES_DIR)) fs.mkdirSync(NATIONWIDE_CITIES_DIR, { recursive: true });
+  fs.writeFileSync(citiesFilePath(code), JSON.stringify(cities, null, 2), 'utf-8');
 }
 
 /**
@@ -587,10 +634,19 @@ app.post('/api/run', (req, res) => {
   if (currentProcess) return res.status(409).json({ error: 'A run is already in progress' });
   const { country } = req.body || {};
   if (!country) return res.status(400).json({ error: 'country is required' });
-  const nationwide = isNationwideCountry(country);
-  if (!nationwide && !['UK', 'FR'].includes(country)) {
-    return res.status(400).json({ error: 'country must be UK, FR, PK, or SA' });
+
+  const entry = lookupCountry(country);
+  if (!entry) {
+    return res.status(400).json({ error: `Unknown country "${country}". Add it on the Settings tab first.` });
   }
+  // GroceryStore-script has hardcoded UK/FR keyword expansions — refuse to route any
+  // other country to that scraper. Admin should set scraper: "nationwide" instead.
+  if (entry.scraper === 'grocery' && !['UK', 'FR'].includes(entry.code)) {
+    return res.status(400).json({
+      error: `Country "${entry.code}" is configured to use the GroceryStore scraper, which only supports UK and FR. Change scraper to "nationwide" in Settings.`,
+    });
+  }
+
   const result = startJob(req.body);
   if (result.error) return res.status(500).json({ error: result.error });
   res.json({ jobId: result.jobId });
@@ -941,9 +997,81 @@ app.get('/api/categories', (req, res) => {
   res.json(CATEGORIES);
 });
 
+// ─── Cities — read/write per-country JSON files in NationwideScraper/src/config/cities/ ─
+
 app.get('/api/cities', (req, res) => {
   const country = (req.query.country || '').toUpperCase();
-  res.json(NATIONWIDE_CITIES[country] || []);
+  if (!country) return res.json([]);
+  // Return only city names for backward compat with the existing dropdown consumer.
+  // Use /api/cities/:country/full to get the full {name, code} entries.
+  const cities = readCities(country);
+  res.json(cities.map((c) => c.name).filter(Boolean));
+});
+
+app.get('/api/cities/:country/full', (req, res) => {
+  const country = String(req.params.country || '').toUpperCase();
+  res.json(readCities(country));
+});
+
+app.post('/api/cities', (req, res) => {
+  const { country, cities } = req.body || {};
+  if (!country) return res.status(400).json({ error: 'country is required' });
+  if (!Array.isArray(cities)) return res.status(400).json({ error: 'cities must be an array of {name, code}' });
+  const code = String(country).toUpperCase();
+  const cleaned = cities
+    .map((c) => typeof c === 'string' ? { name: c.trim(), code: '' } : { name: String(c.name || '').trim(), code: String(c.code || '').trim().toUpperCase() })
+    .filter((c) => c.name);
+  try {
+    writeCities(code, cleaned);
+    res.json({ country: code, cities: cleaned });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/cities/:country/:cityName', (req, res) => {
+  const country = String(req.params.country || '').toUpperCase();
+  const target = String(req.params.cityName || '').toLowerCase();
+  const filtered = readCities(country).filter((c) => c.name.toLowerCase() !== target);
+  try {
+    writeCities(country, filtered);
+    res.json({ country, removed: target, cities: filtered });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Countries registry ──────────────────────────────────────────────────────
+
+app.get('/api/countries', (req, res) => {
+  res.json(readCountries());
+});
+
+app.post('/api/countries', (req, res) => {
+  const { code, name, scraper } = req.body || {};
+  if (!code || !name) return res.status(400).json({ error: 'code and name are required' });
+  const cc = String(code).toUpperCase().trim();
+  if (!/^[A-Z]{2,3}$/.test(cc)) {
+    return res.status(400).json({ error: 'code must be 2-3 uppercase letters (e.g., DE, USA)' });
+  }
+  const scraperType = scraper === 'grocery' ? 'grocery' : 'nationwide';
+  // Guard: only UK/FR are allowed to use the grocery scraper
+  if (scraperType === 'grocery' && !['UK', 'FR'].includes(cc)) {
+    return res.status(400).json({ error: 'Only UK and FR can use the GroceryStore scraper.' });
+  }
+  const list = readCountries();
+  const idx = list.findIndex((c) => c.code === cc);
+  const entry = { code: cc, name: String(name).trim(), scraper: scraperType };
+  if (idx >= 0) list[idx] = entry; else list.push(entry);
+  writeCountries(list);
+  res.json(entry);
+});
+
+app.delete('/api/countries/:code', (req, res) => {
+  const cc = String(req.params.code || '').toUpperCase();
+  const list = readCountries().filter((c) => c.code !== cc);
+  writeCountries(list);
+  res.json({ deleted: cc });
 });
 
 // ─── Health check for tests ──────────────────────────────────────────────────
@@ -953,7 +1081,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Export app for testing
-export { app, startJob, recordCountry, recordSearchHaystack };
+export { app, startJob, recordCountry, recordSearchHaystack, readCountries, lookupCountry };
 
 // Start listening unless in test mode
 if (process.env.NODE_ENV !== 'test') {

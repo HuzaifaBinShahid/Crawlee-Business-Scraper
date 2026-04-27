@@ -136,6 +136,15 @@ async function main() {
       process.exit(1);
     }
     locations = matched;
+  } else if (locations.length === 0) {
+    // No cities configured for this country. Fall back to a single country-wide
+    // search using the display name so the query reads "keyword in South Africa"
+    // rather than "keyword in RSA, RSA" (which Google geo-locates to the user's IP).
+    const fallback = countryDisplayName || countryInput;
+    if (fallback) {
+      logger.warn(`No cities configured for ${fallback}. Searching country-wide. Add cities on the Settings page for better coverage.`);
+      locations = [fallback];
+    }
   }
 
   if (categoryArg) {
@@ -149,7 +158,7 @@ async function main() {
   }
 
   if (!locations.length) {
-    logger.error('No locations for this country. Add cities in config/locations.js or use a known country (PK, SA).');
+    logger.error(`No locations for "${countryInput}". Add the country (and optionally cities) on the Settings page, or pass a known country code.`);
     process.exit(1);
   }
 

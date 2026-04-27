@@ -1,24 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
 import { Flag } from './Flag';
+import { useCountries } from '../hooks/useCountries';
 
 /**
  * Custom country dropdown with inline SVG flags + full name.
- * Drop-in replacement for the generic Select where a country picker is needed.
+ * Country list is fetched dynamically from /api/countries — admin can add/remove
+ * countries from the Settings tab and the dropdown updates instantly.
  */
 
-const COUNTRIES = [
-  { value: 'UK', name: 'United Kingdom' },
-  { value: 'FR', name: 'France' },
-  { value: 'PK', name: 'Pakistan' },
-  { value: 'SA', name: 'Saudi Arabia' },
-];
-
-export const COUNTRY_META = Object.fromEntries(COUNTRIES.map((c) => [c.value, c]));
-
-export function CountrySelect({ label, value, onChange, includeAll = false, id = 'country-select', disabled = false, ...rest }) {
+export function CountrySelect({
+  label, value, onChange,
+  includeAll = false, id = 'country-select',
+  disabled = false, countries: countriesProp,
+  ...rest
+}) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
+  const { countries: countriesFromHook } = useCountries();
+  const COUNTRIES = (countriesProp || countriesFromHook).map((c) => ({ value: c.code, name: c.name }));
 
   useEffect(() => {
     if (!open) return;

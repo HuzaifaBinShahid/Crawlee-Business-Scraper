@@ -1,0 +1,75 @@
+#!/bin/sh
+# Guard against config-file payload injection. See AI-MALWARE-AUDIT-GUIDE.md.
+#
+# Rejects staged source content that either exceeds MAX_LEN characters on a
+# single line or matches a known injection indicator. The April 2026 incident
+# in this repo appended a payload to Frontend/vite.config.js behind 507 spaces,
+# so it sat off-screen in the editor and read as one modified line in the diff.
+#
+# Enable (once per clone):  git config core.hooksPath .githooks
+# Bypass (deliberately):    git commit --no-verify
+
+MAX_LEN=500
+flag=$(mktemp)
+
+# Exempt from the line-length rule only: lockfiles, build output, minified
+# vendor bundles. These legitimately carry very long lines.
+is_exempt() {
+  case "$1" in
+    *-lock.json|dist/*|*/dist/*|build/*|*/build/*|*.min.js|*.min.css|*.map) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Only inspect formats where an injected payload would actually execute.
+is_source() {
+  case "$1" in
+    *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.json|*.css|*.html|*.sh|*.yml|*.yaml) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+git diff --cached --name-only --diff-filter=ACMR | while IFS= read -r f; do
+  is_source "$f" || continue
+
+  # Indicator scan runs on every source file, exempt ones included.
+  hits=$(git show ":$f" 2>/dev/null | grep -nE \
+    'global\.i=|global\._H|global\._t_s|x-payload-b64|eth_getBlockByNumber|blockscout\.com|"Sec-V"|ETH_RPC_URL' \
+    | head -3 | cut -c1-120)
+  if [ -n "$hits" ]; then
+    echo "BLOCKED  $f - matches a known injection indicator:"
+    echo "$hits" | sed 's/^/    /'
+    echo x >> "$flag"
+  fi
+
+  is_exempt "$f" && continue
+
+  # Long-line scan. Lines carrying a data: URI (inlined assets) are exempt.
+  long=$(git show ":$f" 2>/dev/null | awk -v m="$MAX_LEN" '
+    length > m && index($0, "data:") == 0 { printf "    line %d (%d chars)\n", NR, length; n++ }
+    n >= 3 { exit }')
+  if [ -n "$long" ]; then
+    echo "BLOCKED  $f - staged line longer than $MAX_LEN characters:"
+    echo "$long"
+    echo x >> "$flag"
+  fi
+done
+
+if [ -s "$flag" ]; then
+  rm -f "$flag"
+  cat <<'MSG'
+
+Commit rejected by .githooks/pre-commit.
+
+Read the FULL WIDTH of each flagged line before doing anything else - a
+payload hides at the end of the line, not the end of the file.
+
+If the line is genuinely legitimate (a minified bundle, an inlined asset),
+add its path to is_exempt() in this hook rather than bypassing the check.
+To bypass once: git commit --no-verify
+MSG
+  exit 1
+fi
+
+rm -f "$flag"
+exit 0

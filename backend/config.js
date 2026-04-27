@@ -30,8 +30,11 @@ export const NATIONWIDE_SAMPLES_DIR = process.env.NATIONWIDE_SAMPLES_DIR || defa
 
 export const PORT = parseInt(process.env.PORT || '5000', 10);
 
-// Countries that use NationwideScraper
-export const NATIONWIDE_COUNTRIES = ['PK', 'SA'];
+// Countries are now managed at runtime via backend/data/countries.json (admin-editable
+// from the Settings tab). NATIONWIDE_COUNTRIES / NATIONWIDE_CITIES were removed —
+// any country with `scraper: "nationwide"` in the registry + a cities/{cc}.json file
+// just works. UK and FR remain hardcoded in the GroceryStore scraper because that
+// scraper has UK/FR-specific keyword expansions.
 
 // Categories per scraper
 export const CATEGORIES = [
@@ -65,7 +68,16 @@ export const NATIONWIDE_CATEGORIES = [
   'Gyms & Fitness',
 ];
 
-export const NATIONWIDE_CITIES = {
-  PK: ['Karachi', 'Lahore', 'Islamabad', 'Rawalpindi', 'Faisalabad', 'Multan', 'Peshawar', 'Quetta', 'Sialkot', 'Gujranwala'],
-  SA: ['Riyadh', 'Jeddah', 'Mecca', 'Medina', 'Dammam', 'Khobar', 'Taif', 'Buraidah', 'Tabuk', 'Abha'],
-};
+// Default seed for backend/data/countries.json on first boot. Edit the file directly
+// or use the Settings tab to add/remove countries — never modify this default after
+// deployment, the runtime registry is the source of truth.
+export const DEFAULT_COUNTRIES = [
+  { code: 'UK', name: 'United Kingdom', scraper: 'grocery' },
+  { code: 'FR', name: 'France',         scraper: 'grocery' },
+  { code: 'PK', name: 'Pakistan',       scraper: 'nationwide' },
+  { code: 'SA', name: 'Saudi Arabia',   scraper: 'nationwide' },
+];
+
+// Path inside the NationwideScraper where per-country city JSON files live.
+// Backend reads + writes these directly when admin manages cities from the dashboard.
+export const NATIONWIDE_CITIES_DIR = path.join(NATIONWIDE_DIR, 'src', 'config', 'cities');

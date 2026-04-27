@@ -5,6 +5,7 @@ import { Card } from './Card';
 import { SectionHeading } from './SectionHeading';
 import { NumberInput } from './NumberInput';
 import { TextArea } from './TextArea';
+import { CountriesAdmin } from './CountriesAdmin';
 import { getSettings, updateSettings } from '../api/client';
 
 export function SettingsTab() {
@@ -46,6 +47,9 @@ export function SettingsTab() {
         title="Default Settings"
         subtitle="Starting values for new scrape runs. You can still override per run."
       />
+      <div className="max-w-xl mb-6">
+        <CountriesAdmin />
+      </div>
       <div className="max-w-xl">
         <Card>
           <div data-testid="settings-form" className="space-y-5">

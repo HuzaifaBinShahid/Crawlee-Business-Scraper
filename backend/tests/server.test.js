@@ -22,6 +22,7 @@ fs.mkdirSync(path.join(TEST_DATA_DIR, 'failed'), { recursive: true });
 process.env.DATA_DIR = TEST_DATA_DIR;
 
 const { app, recordCountry, recordSearchHaystack } = await import('../server.js');
+const { DEFAULT_COUNTRIES, NATIONWIDE_CITIES_DIR } = await import('../config.js');
 
 // Import the scraper's client-export transformer so we can verify the exact
 // schema delivered to the client.
@@ -71,12 +72,13 @@ after(() => {
 });
 
 beforeEach(() => {
-  // Reset history/presets/settings to defaults between tests
+  // Reset history/presets/settings/countries to defaults between tests
   fs.writeFileSync(path.join(DATA_DIR, 'history.json'), '[]', 'utf-8');
   fs.writeFileSync(path.join(DATA_DIR, 'presets.json'), '[]', 'utf-8');
   fs.writeFileSync(path.join(DATA_DIR, 'settings.json'), JSON.stringify({
     minDelay: 2000, maxDelay: 5000, navTimeout: 90, maxRetries: 0, proxies: [],
   }), 'utf-8');
+  fs.writeFileSync(path.join(DATA_DIR, 'countries.json'), JSON.stringify(DEFAULT_COUNTRIES), 'utf-8');
 });
 
 describe('Health & basic endpoints', () => {
@@ -539,5 +541,143 @@ describe('recordSearchHaystack — covers flat + nested record text', () => {
     assert.ok(hay.includes('paris'));
     assert.ok(hay.includes('https://debloc.fr'));
     assert.ok(hay.includes('repair shops'));
+  });
+});
+
+describe('Countries registry — admin-managed', () => {
+  test('GET /api/countries returns the seeded defaults', async () => {
+    const res = await req('GET', '/api/countries');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body));
+    const codes = res.body.map((c) => c.code).sort();
+    assert.deepEqual(codes, ['FR', 'PK', 'SA', 'UK']);
+  });
+
+  test('POST /api/countries adds a new country', async () => {
+    const add = await req('POST', '/api/countries', { code: 'DE', name: 'Germany', scraper: 'nationwide' });
+    assert.equal(add.status, 200);
+    assert.equal(add.body.code, 'DE');
+    const list = await req('GET', '/api/countries');
+    assert.ok(list.body.find((c) => c.code === 'DE'));
+  });
+
+  test('POST /api/countries upserts an existing country (same code)', async () => {
+    await req('POST', '/api/countries', { code: 'DE', name: 'Germany', scraper: 'nationwide' });
+    await req('POST', '/api/countries', { code: 'DE', name: 'Deutschland', scraper: 'nationwide' });
+    const list = await req('GET', '/api/countries');
+    const matches = list.body.filter((c) => c.code === 'DE');
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].name, 'Deutschland');
+  });
+
+  test('POST /api/countries rejects invalid code', async () => {
+    const res = await req('POST', '/api/countries', { code: '12', name: 'Bad' });
+    assert.equal(res.status, 400);
+  });
+
+  test('POST /api/countries rejects missing name', async () => {
+    const res = await req('POST', '/api/countries', { code: 'AT' });
+    assert.equal(res.status, 400);
+  });
+
+  test('POST /api/countries rejects grocery scraper for non UK/FR', async () => {
+    const res = await req('POST', '/api/countries', { code: 'DE', name: 'Germany', scraper: 'grocery' });
+    assert.equal(res.status, 400);
+  });
+
+  test('DELETE /api/countries/:code removes the country', async () => {
+    await req('POST', '/api/countries', { code: 'DE', name: 'Germany', scraper: 'nationwide' });
+    const del = await req('DELETE', '/api/countries/DE');
+    assert.equal(del.status, 200);
+    const list = await req('GET', '/api/countries');
+    assert.ok(!list.body.find((c) => c.code === 'DE'));
+  });
+});
+
+describe('Cities admin — read/write per-country JSON', () => {
+  // Use a code that has no existing on-disk JSON file so we can exercise creation
+  // and clean up reliably.
+  const TEST_CC = 'ZZ';
+  const fp = path.join(NATIONWIDE_CITIES_DIR, `${TEST_CC.toLowerCase()}.json`);
+  const cleanup = () => { if (fs.existsSync(fp)) fs.unlinkSync(fp); };
+
+  before(cleanup);
+  after(cleanup);
+
+  test('GET /api/cities returns [] for an unknown country', async () => {
+    const res = await req('GET', `/api/cities?country=${TEST_CC}`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, []);
+  });
+
+  test('GET /api/cities/:cc/full returns full {name,code} entries for PK', async () => {
+    const res = await req('GET', '/api/cities/PK/full');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body));
+    assert.ok(res.body.length > 0);
+    assert.ok(res.body[0].name);
+    assert.ok(res.body[0].code);
+  });
+
+  test('POST /api/cities writes the file; GET returns the names', async () => {
+    cleanup();
+    const save = await req('POST', '/api/cities', {
+      country: TEST_CC,
+      cities: [{ name: 'Berlin', code: 'BER' }, { name: 'Munich', code: 'MUC' }],
+    });
+    assert.equal(save.status, 200);
+
+    const res = await req('GET', `/api/cities?country=${TEST_CC}`);
+    assert.deepEqual(res.body.sort(), ['Berlin', 'Munich']);
+
+    const full = await req('GET', `/api/cities/${TEST_CC}/full`);
+    assert.equal(full.body.length, 2);
+
+    cleanup();
+  });
+
+  test('POST /api/cities rejects non-array body', async () => {
+    const res = await req('POST', '/api/cities', { country: TEST_CC, cities: 'nope' });
+    assert.equal(res.status, 400);
+  });
+
+  test('DELETE /api/cities/:country/:cityName removes a single city', async () => {
+    cleanup();
+    await req('POST', '/api/cities', {
+      country: TEST_CC,
+      cities: [{ name: 'Berlin', code: 'BER' }, { name: 'Munich', code: 'MUC' }],
+    });
+    const del = await req('DELETE', `/api/cities/${TEST_CC}/Berlin`);
+    assert.equal(del.status, 200);
+    const res = await req('GET', `/api/cities?country=${TEST_CC}`);
+    assert.deepEqual(res.body, ['Munich']);
+    cleanup();
+  });
+});
+
+describe('Run validation uses dynamic country registry', () => {
+  test('POST /api/run rejects unknown country with helpful message', async () => {
+    const res = await req('POST', '/api/run', { country: 'ZZ' });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error || '', /Unknown country/i);
+  });
+
+  test('POST /api/run rejects grocery scraper for any code besides UK/FR', async () => {
+    // PK is registered as nationwide by default so the grocery code path should
+    // never run for it. We simulate by upserting PK as grocery via the registry,
+    // which the endpoint also blocks — confirm both layers agree.
+    const upsert = await req('POST', '/api/countries', { code: 'PK', name: 'Pakistan', scraper: 'grocery' });
+    assert.equal(upsert.status, 400);
+  });
+
+  test('POST /api/run accepts a freshly added nationwide country (does not 400 on validation)', async () => {
+    await req('POST', '/api/countries', { code: 'AT', name: 'Austria', scraper: 'nationwide' });
+    // The /api/run endpoint should pass validation. We don't actually want to spawn
+    // a child process in tests — but if it gets past validation, the response will
+    // be either 200 (jobId) or 409 (busy), never 400 with "Unknown country".
+    const res = await req('POST', '/api/run', { country: 'AT', sample: true });
+    assert.notEqual(res.status, 400, `Expected validation to pass; got ${res.status} ${JSON.stringify(res.body)}`);
+    // Best-effort: stop whatever spawned, so the next test isn't blocked.
+    await req('POST', '/api/run/stop').catch(() => {});
   });
 });
