@@ -133,6 +133,42 @@ export async function getCities(country) {
   return handleJson(await fetch(`${API_BASE}/cities?country=${encodeURIComponent(country)}`));
 }
 
+// ─── Country / city registry (admin-managed) ─────────────────────────────────
+
+export async function getCountries() {
+  return handleJson(await fetch(`${API_BASE}/countries`));
+}
+
+export async function saveCountry({ code, name, scraper }) {
+  const res = await fetch(`${API_BASE}/countries`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name, scraper }),
+  });
+  return handleJson(res);
+}
+
+export async function deleteCountry(code) {
+  return handleJson(await fetch(`${API_BASE}/countries/${encodeURIComponent(code)}`, { method: 'DELETE' }));
+}
+
+export async function getCitiesFull(country) {
+  return handleJson(await fetch(`${API_BASE}/cities/${encodeURIComponent(country)}/full`));
+}
+
+export async function saveCities(country, cities) {
+  const res = await fetch(`${API_BASE}/cities`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ country, cities }),
+  });
+  return handleJson(res);
+}
+
+export async function deleteCity(country, cityName) {
+  return handleJson(await fetch(`${API_BASE}/cities/${encodeURIComponent(country)}/${encodeURIComponent(cityName)}`, { method: 'DELETE' }));
+}
+
 // ─── Download ────────────────────────────────────────────────────────────────
 
 export function downloadUrl(country, format) {

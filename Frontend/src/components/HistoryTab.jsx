@@ -5,8 +5,7 @@ import { Card } from './Card';
 import { SectionHeading } from './SectionHeading';
 import { Flag } from './Flag';
 import { getHistory, clearHistory, retryJob, resumeJob, getFailed } from '../api/client';
-
-const COUNTRY_NAME = { UK: 'United Kingdom', FR: 'France', PK: 'Pakistan', SA: 'Saudi Arabia' };
+import { useCountries } from '../hooks/useCountries';
 
 function formatDuration(start, end) {
   if (!start || !end) return '—';
@@ -49,6 +48,8 @@ function StatusPill({ status }) {
 }
 
 export function HistoryTab() {
+  const { countries } = useCountries();
+  const countryName = (code) => countries.find((c) => c.code === code)?.name || code;
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [failedMap, setFailedMap] = useState({});
@@ -173,7 +174,7 @@ export function HistoryTab() {
                     <Td><StatusPill status={h.status} /></Td>
                     <Td>
                       {h.country ? (
-                        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5 whitespace-nowrap" title={countryName(h.country)}>
                           <Flag code={h.country} size={16} />
                           <span>{h.country}</span>
                         </span>

@@ -14,9 +14,19 @@ import { getSearchUrl } from '../config/sources.js';
 
 function buildSearchUrl(keyword, location, countryDisplayName) {
   const baseUrl = getSearchUrl(countryDisplayName);
-  const query = countryDisplayName
-    ? `${keyword} in ${location}, ${countryDisplayName}`
-    : `${keyword} in ${location}`;
+  const loc = String(location || '').trim();
+  const country = String(countryDisplayName || '').trim();
+  let query;
+  if (country && loc && loc.toLowerCase() !== country.toLowerCase()) {
+    query = `${keyword} in ${loc}, ${country}`;
+  } else if (country) {
+    // Either no location, or location matches the country — country-wide search.
+    query = `${keyword} in ${country}`;
+  } else if (loc) {
+    query = `${keyword} in ${loc}`;
+  } else {
+    query = keyword;
+  }
   return `${baseUrl}${encodeURIComponent(query)}`;
 }
 
