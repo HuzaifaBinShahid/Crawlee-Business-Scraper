@@ -9,8 +9,7 @@ import { CountrySelect } from './CountrySelect';
 import { CategorySelect } from './CategorySelect';
 import { TextInput } from './TextInput';
 import { Flag } from './Flag';
-
-const COUNTRY_NAME = { UK: 'United Kingdom', FR: 'France', PK: 'Pakistan', SA: 'Saudi Arabia' };
+import { useCountries } from '../hooks/useCountries';
 import { Card } from './Card';
 import { SectionHeading } from './SectionHeading';
 
@@ -26,6 +25,8 @@ const FILTER_CHIPS = [
 const DOWNLOAD_FORMATS = ['csv', 'json', 'ndjson'];
 
 export function DataTab() {
+  const { countries } = useCountries();
+  const countryName = (code) => countries.find((c) => c.code === code)?.name || code;
   const [data, setData] = useState([]);
   const [failedRecords, setFailedRecords] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -152,7 +153,7 @@ export function DataTab() {
         return (
           <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
             <Flag code={code} size={18} />
-            <span>{COUNTRY_NAME[code] || code}</span>
+            <span>{countryName(code)}</span>
           </span>
         );
       },
